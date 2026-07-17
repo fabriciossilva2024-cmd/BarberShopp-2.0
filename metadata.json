@@ -1,0 +1,5 @@
+{
+  "name": "BarberPro Premium",
+  "description": "A comprehensive barbershop management system featuring client booking, live queue monitoring, barber workflow management, and administrative analytics.",
+  "requestFramePermissions": []
+}
