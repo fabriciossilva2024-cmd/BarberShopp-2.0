@@ -20,6 +20,383 @@ const DAYS_OF_WEEK = [
     { id: 6, label: 'Sáb', full: 'Sábado' },
 ];
 
+// --- CAIXA VIEW COMPONENT ---
+interface CaixaViewProps {
+    services: Service[];
+    barbers: Barber[];
+    appointments: any[];
+    expenses: any[];
+    revenues: any[];
+    addExpense: (expense: any) => Promise<void>;
+    addRevenue: (revenue: any) => Promise<void>;
+}
+
+const CaixaView: React.FC<CaixaViewProps> = ({ services, barbers, appointments, expenses, revenues, addExpense, addRevenue }) => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    
+    const [caixaOpen, setCaixaOpen] = useState(false);
+    const [openingAmount, setOpeningAmount] = useState('');
+    const [closingAmount, setClosingAmount] = useState('');
+    const [showAddTransaction, setShowAddTransaction] = useState(false);
+    const [transactionType, setTransactionType] = useState<'INCOME' | 'EXPENSE'>('INCOME');
+    const [transactionDesc, setTransactionDesc] = useState('');
+    const [transactionAmount, setTransactionAmount] = useState('');
+    const [transactionCategory, setTransactionCategory] = useState('OTHER');
+    const [isClosing, setIsClosing] = useState(false);
+    const [confirmClose, setConfirmClose] = useState(false);
+
+    // Load caixa state from localStorage
+    useEffect(() => {
+        const saved = localStorage.getItem(`caixa_${todayStr}`);
+        if (saved) {
+            const data = JSON.parse(saved);
+            setCaixaOpen(data.open || false);
+            setOpeningAmount(data.openingAmount || '');
+        }
+    }, [todayStr]);
+
+    const saveCaixaState = (open: boolean, amount: string) => {
+        localStorage.setItem(`caixa_${todayStr}`, JSON.stringify({ open, openingAmount: amount }));
+    };
+
+    // Today's transactions
+    const todayAppointments = useMemo(() => 
+        appointments.filter(a => a.date?.startsWith(todayStr) && a.status === 'COMPLETED'),
+    [appointments, todayStr]);
+
+    const todayRevenues = useMemo(() => 
+        revenues.filter(r => r.date?.startsWith(todayStr)),
+    [revenues, todayStr]);
+
+    const todayExpenses = useMemo(() => 
+        expenses.filter(e => e.date?.startsWith(todayStr)),
+    [expenses, todayStr]);
+
+    const totalEntradas = todayAppointments.reduce((sum, a) => sum + (a.totalPrice || 0), 0) 
+        + todayRevenues.reduce((sum, r) => sum + (r.amount || 0), 0);
+    
+    const totalSaidas = todayExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+    
+    const saldoAtual = (parseFloat(openingAmount) || 0) + totalEntradas - totalSaidas;
+
+    const handleOpenCaixa = () => {
+        if (!openingAmount || parseFloat(openingAmount) < 0) {
+            alert('Informe o valor de abertura do caixa.');
+            return;
+        }
+        setCaixaOpen(true);
+        saveCaixaState(true, openingAmount);
+    };
+
+    const handleCloseCaixa = async () => {
+        if (!confirmClose) {
+            setConfirmClose(true);
+            return;
+        }
+        setIsClosing(true);
+        
+        // Register closing as expense (transfer)
+        await addExpense({
+            description: 'Fechamento de Caixa - Retirada',
+            amount: saldoAtual,
+            category: 'OTHER',
+            date: new Date().toISOString()
+        });
+        
+        setCaixaOpen(false);
+        setClosingAmount(saldoAtual.toFixed(2));
+        saveCaixaState(false, '');
+        setIsClosing(false);
+        setConfirmClose(false);
+        alert(`Caixa fechado! Saldo: R$ ${saldoAtual.toFixed(2)}`);
+    };
+
+    const handleAddTransaction = async () => {
+        if (!transactionDesc || !transactionAmount || parseFloat(transactionAmount) <= 0) {
+            alert('Preencha descrição e valor.');
+            return;
+        }
+
+        const amount = parseFloat(transactionAmount);
+        const now = new Date().toISOString();
+
+        if (transactionType === 'INCOME') {
+            await addRevenue({ description: transactionDesc, amount, category: transactionCategory, date: now });
+        } else {
+            await addExpense({ description: transactionDesc, amount, category: transactionCategory, date: now });
+        }
+
+        setTransactionDesc('');
+        setTransactionAmount('');
+        setTransactionCategory('OTHER');
+        setShowAddTransaction(false);
+    };
+
+    if (!caixaOpen) {
+        return (
+            <div className="animate-fade-in space-y-6">
+                <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                    <Wallet size={24} className="text-gold-500" /> Painel Caixa
+                </h2>
+                
+                <div className="max-w-md mx-auto">
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center">
+                        <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-6 border-2 border-gold-500/30">
+                            <Wallet size={36} className="text-gold-500" />
+                        </div>
+                        <h3 className="text-xl font-bold text-white mb-2">Caixa Fechado</h3>
+                        <p className="text-slate-400 text-sm mb-6">Abra o caixa para iniciar as operações do dia.</p>
+                        
+                        <div className="space-y-4">
+                            <div>
+                                <label className="text-xs uppercase font-bold text-slate-500 mb-1 block">Valor de Abertura (R$)</label>
+                                <input 
+                                    type="number" 
+                                    step="0.01"
+                                    min="0"
+                                    value={openingAmount}
+                                    onChange={(e) => setOpeningAmount(e.target.value)}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white text-center text-xl font-bold focus:outline-none focus:border-gold-500"
+                                    placeholder="0,00"
+                                />
+                            </div>
+                            <button 
+                                onClick={handleOpenCaixa}
+                                className="w-full bg-gold-500 hover:bg-gold-400 text-slate-900 font-bold py-3 rounded-lg transition-colors text-lg"
+                            >
+                                Abrir Caixa
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="animate-fade-in space-y-6">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                    <Wallet size={24} className="text-gold-500" /> Painel Caixa
+                    <span className="text-xs px-3 py-1 bg-green-500/10 text-green-500 rounded-full border border-green-500/20 ml-2">
+                        ABERTO
+                    </span>
+                </h2>
+                <button 
+                    onClick={handleCloseCaixa}
+                    disabled={isClosing}
+                    className={`px-6 py-2 rounded-lg font-bold flex items-center gap-2 transition-colors ${
+                        confirmClose 
+                            ? 'bg-red-600 hover:bg-red-500 text-white animate-pulse' 
+                            : 'bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20'
+                    }`}
+                >
+                    {isClosing ? <Loader size={16} className="animate-spin" /> : <Lock size={16} />}
+                    {confirmClose ? 'Confirmar Fechamento' : 'Fechar Caixa'}
+                </button>
+            </div>
+
+            {/* Saldo Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
+                    <div className="text-slate-400 text-xs font-bold uppercase mb-1 flex items-center gap-1">
+                        <Banknote size={12} /> Abertura
+                    </div>
+                    <div className="text-2xl font-bold text-white">R$ {parseFloat(openingAmount || '0').toFixed(2)}</div>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
+                    <div className="text-slate-400 text-xs font-bold uppercase mb-1 flex items-center gap-1">
+                        <ArrowUpRight size={12} className="text-green-500" /> Entradas
+                    </div>
+                    <div className="text-2xl font-bold text-green-500">R$ {totalEntradas.toFixed(2)}</div>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
+                    <div className="text-slate-400 text-xs font-bold uppercase mb-1 flex items-center gap-1">
+                        <ArrowDownLeft size={12} className="text-red-500" /> Saídas
+                    </div>
+                    <div className="text-2xl font-bold text-red-500">R$ {totalSaidas.toFixed(2)}</div>
+                </div>
+                <div className="bg-slate-900 border border-gold-500/30 p-5 rounded-xl shadow-lg shadow-gold-500/5">
+                    <div className="text-gold-500 text-xs font-bold uppercase mb-1 flex items-center gap-1">
+                        <Wallet size={12} /> Saldo Atual
+                    </div>
+                    <div className={`text-2xl font-bold ${saldoAtual >= 0 ? 'text-gold-500' : 'text-red-500'}`}>
+                        R$ {saldoAtual.toFixed(2)}
+                    </div>
+                </div>
+            </div>
+
+            {/* Add Transaction Button */}
+            <div className="flex justify-end">
+                <button 
+                    onClick={() => setShowAddTransaction(true)}
+                    className="bg-gold-500 hover:bg-gold-400 text-slate-900 px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-lg shadow-gold-900/20"
+                >
+                    <Plus size={18} /> Novo Lançamento
+                </button>
+            </div>
+
+            {/* Transaction Modal */}
+            {showAddTransaction && (
+                <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md">
+                        <div className="flex justify-between items-center mb-6">
+                            <h3 className="text-xl font-bold text-white">Novo Lançamento</h3>
+                            <button onClick={() => setShowAddTransaction(false)} className="text-slate-400 hover:text-white">
+                                <X size={24} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div className="flex gap-2">
+                                <button 
+                                    onClick={() => setTransactionType('INCOME')}
+                                    className={`flex-1 py-3 rounded-lg font-bold transition-colors ${
+                                        transactionType === 'INCOME' 
+                                            ? 'bg-green-500 text-white' 
+                                            : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                    }`}
+                                >
+                                    <ArrowUpRight size={16} className="inline mr-1" /> Entrada
+                                </button>
+                                <button 
+                                    onClick={() => setTransactionType('EXPENSE')}
+                                    className={`flex-1 py-3 rounded-lg font-bold transition-colors ${
+                                        transactionType === 'EXPENSE' 
+                                            ? 'bg-red-500 text-white' 
+                                            : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                    }`}
+                                >
+                                    <ArrowDownLeft size={16} className="inline mr-1" /> Saída
+                                </button>
+                            </div>
+
+                            <div>
+                                <label className="text-xs uppercase font-bold text-slate-500 mb-1 block">Descrição</label>
+                                <input 
+                                    type="text" 
+                                    value={transactionDesc}
+                                    onChange={(e) => setTransactionDesc(e.target.value)}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-gold-500"
+                                    placeholder="Ex: Venda de produto, Compra de material..."
+                                />
+                            </div>
+
+                            <div>
+                                <label className="text-xs uppercase font-bold text-slate-500 mb-1 block">Valor (R$)</label>
+                                <input 
+                                    type="number" 
+                                    step="0.01"
+                                    min="0"
+                                    value={transactionAmount}
+                                    onChange={(e) => setTransactionAmount(e.target.value)}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white text-lg font-bold focus:outline-none focus:border-gold-500"
+                                    placeholder="0,00"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="text-xs uppercase font-bold text-slate-500 mb-1 block">Categoria</label>
+                                <select 
+                                    value={transactionCategory}
+                                    onChange={(e) => setTransactionCategory(e.target.value)}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-gold-500"
+                                >
+                                    {transactionType === 'INCOME' ? (
+                                        <>
+                                            <option value="PRODUCT">Produto</option>
+                                            <option value="SERVICE">Serviço Extra</option>
+                                            <option value="OTHER">Outro</option>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <option value="FIXED">Fixo</option>
+                                            <option value="VARIABLE">Variável</option>
+                                            <option value="MARKETING">Marketing</option>
+                                            <option value="OTHER">Outro</option>
+                                        </>
+                                    )}
+                                </select>
+                            </div>
+
+                            <button 
+                                onClick={handleAddTransaction}
+                                className={`w-full py-3 rounded-lg font-bold transition-colors ${
+                                    transactionType === 'INCOME'
+                                        ? 'bg-green-600 hover:bg-green-500 text-white'
+                                        : 'bg-red-600 hover:bg-red-500 text-white'
+                                }`}
+                            >
+                                Registrar {transactionType === 'INCOME' ? 'Entrada' : 'Saída'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Transactions List */}
+            <div className="grid lg:grid-cols-2 gap-6">
+                {/* Entradas */}
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+                    <h4 className="font-bold text-white mb-4 flex items-center gap-2">
+                        <ArrowUpRight size={18} className="text-green-500" /> Entradas do Dia
+                    </h4>
+                    <div className="space-y-2 max-h-[400px] overflow-y-auto custom-scrollbar">
+                        {todayAppointments.length === 0 && todayRevenues.length === 0 ? (
+                            <p className="text-center text-slate-500 text-sm py-4">Nenhuma entrada registrada hoje.</p>
+                        ) : (
+                            <>
+                                {todayAppointments.map(apt => (
+                                    <div key={apt.id} className="bg-slate-800/50 p-3 rounded-lg flex justify-between items-center">
+                                        <div>
+                                            <div className="text-sm font-bold text-white">{apt.clientName}</div>
+                                            <div className="text-[10px] text-slate-500">
+                                                Serviço • {new Date(apt.date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                            </div>
+                                        </div>
+                                        <span className="text-green-500 font-bold text-sm">+ R$ {(apt.totalPrice || 0).toFixed(2)}</span>
+                                    </div>
+                                ))}
+                                {todayRevenues.map(rev => (
+                                    <div key={rev.id} className="bg-slate-800/50 p-3 rounded-lg flex justify-between items-center">
+                                        <div>
+                                            <div className="text-sm font-bold text-white">{rev.description}</div>
+                                            <div className="text-[10px] text-slate-500">{rev.category} • {new Date(rev.date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</div>
+                                        </div>
+                                        <span className="text-green-500 font-bold text-sm">+ R$ {rev.amount.toFixed(2)}</span>
+                                    </div>
+                                ))}
+                            </>
+                        )}
+                    </div>
+                </div>
+
+                {/* Saídas */}
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+                    <h4 className="font-bold text-white mb-4 flex items-center gap-2">
+                        <ArrowDownLeft size={18} className="text-red-500" /> Saídas do Dia
+                    </h4>
+                    <div className="space-y-2 max-h-[400px] overflow-y-auto custom-scrollbar">
+                        {todayExpenses.length === 0 ? (
+                            <p className="text-center text-slate-500 text-sm py-4">Nenhuma saída registrada hoje.</p>
+                        ) : (
+                            todayExpenses.map(exp => (
+                                <div key={exp.id} className="bg-slate-800/50 p-3 rounded-lg flex justify-between items-center">
+                                    <div>
+                                        <div className="text-sm font-bold text-white">{exp.description}</div>
+                                        <div className="text-[10px] text-slate-500">{exp.category} • {new Date(exp.date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</div>
+                                    </div>
+                                    <span className="text-red-500 font-bold text-sm">- R$ {exp.amount.toFixed(2)}</span>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 export const AdminDashboard = () => {
   const { 
     config, services, barbers, products, appointments, expenses, revenues, announcements,
@@ -539,8 +916,9 @@ export const AdminDashboard = () => {
                <TabButton id="BARBERS" icon={Users} label="Profissionais" />
                <TabButton id="SERVICES" icon={Scissors} label="Serviços" />
                <TabButton id="PRODUCTS" icon={ShoppingBag} label="Produtos" />
-               <TabButton id="FINANCE" icon={DollarSign} label="Financeiro" />
-               <TabButton id="ANNOUNCEMENTS" icon={Megaphone} label="Avisos" />
+                <TabButton id="FINANCE" icon={DollarSign} label="Financeiro" />
+                <TabButton id="CAIXA" icon={Wallet} label="Caixa" />
+                <TabButton id="ANNOUNCEMENTS" icon={Megaphone} label="Avisos" />
                <TabButton id="SETTINGS" icon={Settings} label="Configurações" />
            </div>
         </div>
@@ -1104,6 +1482,19 @@ export const AdminDashboard = () => {
 
               </div>
            </div>
+        )}
+
+        {/* VIEW: CAIXA */}
+        {activeTab === 'CAIXA' && (
+           <CaixaView 
+             services={services}
+             barbers={barbers}
+             appointments={appointments}
+             expenses={expenses}
+             revenues={revenues}
+             addExpense={addExpense}
+             addRevenue={addRevenue}
+           />
         )}
 
         {/* VIEW: ANNOUNCEMENTS */}
