@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { Appointment, Barber, Product, Service, AppConfig, PaymentMethod, Expense, Revenue, Announcement, UserRole } from './types';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
+import { Appointment, Barber, Product, Service, AppConfig, PaymentMethod, Expense, Revenue, Announcement, UserRole, Client } from './types';
 import { supabase } from './supabaseClient';
 import { addToOfflineQueue } from './offlineSync';
 import { 
@@ -33,21 +33,29 @@ const isValidUuid = (id: string) => {
 const mapAppointmentFromDB = (dbApt: any): Appointment => {
   const dateTimeStr = `${dbApt.appointment_date}T${dbApt.appointment_time}`;
   
-  let status: any = dbApt.status ? dbApt.status.toLowerCase() : 'pending';
-  if (status === 'scheduled') status = 'PENDING';
-  else if (status === 'finished') status = 'COMPLETED';
-  else if (status === 'canceled') status = 'CANCELLED';
-  else if (status === 'in_progress') status = 'IN_PROGRESS';
-  else status = status.toUpperCase();
+  const statusMap: Record<string, Appointment['status']> = {
+    'scheduled': 'PENDING',
+    'confirmed': 'CONFIRMED',
+    'in_progress': 'IN_PROGRESS',
+    'finished': 'COMPLETED',
+    'completed': 'COMPLETED',
+    'canceled': 'CANCELLED',
+    'cancelled': 'CANCELLED',
+    'no_show': 'NO_SHOW',
+    'pending': 'PENDING'
+  };
+  const rawStatus = dbApt.status ? dbApt.status.toLowerCase() : 'pending';
+  const status = statusMap[rawStatus] || rawStatus.toUpperCase() as Appointment['status'];
 
-  return {
+    return {
     id: dbApt.id,
     clientName: dbApt.client_name,
+    clientId: dbApt.client_id,
     serviceId: dbApt.service_id,
     barberId: dbApt.barber_id,
     date: dateTimeStr,
     status: status,
-    totalPrice: 0, 
+    totalPrice: dbApt.total_price || 0, 
     productIds: dbApt.product_ids || [], 
     commissionPaid: dbApt.commission_paid || false, 
     commissionPaymentMethod: dbApt.commission_payment_method,
@@ -56,22 +64,24 @@ const mapAppointmentFromDB = (dbApt: any): Appointment => {
   };
 };
 
-const mapBarberFromDB = (dbBarber: any, profile: any): Barber => {
+  const mapBarberFromDB = (dbBarber: any, profile?: any): Barber => {
   return {
     id: dbBarber.id,
-    name: profile?.name || dbBarber.name || 'Barbeiro',
+    name: dbBarber.name || 'Barbeiro',
+    role: dbBarber.role || 'BARBER',
     specialties: dbBarber.specialty ? dbBarber.specialty.split(',') : [],
     avatar: dbBarber.avatar || 'https://images.unsplash.com/photo-1583543735309-b5f70a75cdbd?auto=format&fit=crop&w=500&q=80',
     rating: dbBarber.rating || 5.0,
     commissionRate: dbBarber.commission_rate ?? 0.5,
-    username: profile?.email || dbBarber.username || dbBarber.email || '',
-    password: dbBarber.password || '', 
+    username: dbBarber.username || dbBarber.email || '',
+    password: '', 
     experienceYears: dbBarber.experience_years || 0,
     shiftStart: dbBarber.shift_start || '09:00',
     shiftEnd: dbBarber.shift_end || '18:00',
     breakStart: dbBarber.break_start || '12:00',
     breakEnd: dbBarber.break_end || '13:00',
-    bio: dbBarber.bio || ''
+    bio: dbBarber.bio || '',
+    isOnBreak: dbBarber.is_on_break === true
   };
 };
 
@@ -84,6 +94,7 @@ interface AppContextType {
   expenses: Expense[];
   revenues: Revenue[];
   announcements: Announcement[];
+  clients: Client[];
   loading: boolean;
   isSupabaseConnected: boolean;
   
@@ -93,9 +104,11 @@ interface AppContextType {
   logout: () => Promise<void>;
 
   addAppointment: (apt: Omit<Appointment, 'id'>) => Promise<void>;
+  updateAppointment: (id: string, updates: Partial<Appointment>) => Promise<void>;
+  deleteAppointment: (id: string) => Promise<void>;
   updateAppointmentStatus: (id: string, status: Appointment['status']) => Promise<void>;
   updateProductStock: (id: string, delta: number) => Promise<void>;
-  updateConfig: (newConfig: Partial<AppConfig>) => Promise<void>;
+  updateConfig: (newConfig: Partial<AppConfig>) => Promise<string | null>;
   addBarber: (barber: Omit<Barber, 'id'>) => Promise<void>;
   updateBarber: (id: string, updates: Partial<Barber>) => Promise<void>;
   deleteBarber: (id: string) => Promise<void>;
@@ -115,6 +128,9 @@ interface AppContextType {
   addAnnouncement: (announcement: Omit<Announcement, 'id' | 'createdAt'>) => Promise<void>;
   deleteAnnouncement: (id: string) => Promise<void>;
   toggleAnnouncement: (id: string) => Promise<void>;
+  addClient: (client: Omit<Client, 'id'>) => Promise<Client>;
+  findClientByPhone: (phone: string) => Client | undefined;
+  updateClient: (id: string, updates: Partial<Client>) => Promise<void>;
   seedDatabase: () => Promise<void>;
   refreshData: (isBackground?: boolean) => Promise<void>; 
   testConnection: () => Promise<{ success: boolean; message: string }>;
@@ -125,8 +141,21 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [isSupabaseConnected, setIsSupabaseConnected] = useState(false);
-  const [userRole, setUserRole] = useState<UserRole | undefined>(undefined);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [userRole, setUserRole] = useState<UserRole | undefined>(() => {
+    try { return (localStorage.getItem('barberpro_role') as UserRole) || undefined; } catch { return undefined; }
+  });
+  const [currentUserId, setCurrentUserId] = useState<string | null>(() => {
+    try { return localStorage.getItem('barberpro_user_id') || null; } catch { return null; }
+  });
+
+  useEffect(() => {
+    try {
+      if (userRole) localStorage.setItem('barberpro_role', userRole);
+      else localStorage.removeItem('barberpro_role');
+      if (currentUserId) localStorage.setItem('barberpro_user_id', currentUserId);
+      else localStorage.removeItem('barberpro_user_id');
+    } catch {}
+  }, [userRole, currentUserId]);
   
   const [config, setConfig] = useState<AppConfig>(INITIAL_CONFIG);
   const [services, setServices] = useState<Service[]>([]);
@@ -136,6 +165,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [revenues, setRevenues] = useState<Revenue[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
 
   // --- Auth Logic ---
   const checkUserRole = async (userId: string) => {
@@ -157,14 +187,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     if (navigator.onLine) {
         supabase.auth.getSession().then(({ data: { session } }) => {
-            if (session) checkUserRole(session.user.id);
+            if (session) {
+                checkUserRole(session.user.id);
+            } else {
+                const hasLocalRole = !!localStorage.getItem('barberpro_role');
+                if (hasLocalRole) {
+                    setUserRole(localStorage.getItem('barberpro_role') as UserRole);
+                    setCurrentUserId(localStorage.getItem('barberpro_user_id'));
+                }
+            }
         });
 
         const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-            if (session) checkUserRole(session.user.id);
-            else {
-                setUserRole(undefined);
-                setCurrentUserId(null);
+            if (session) {
+                checkUserRole(session.user.id);
+            } else {
+                const hasLocalRole = !!localStorage.getItem('barberpro_role');
+                if (!hasLocalRole) {
+                    setUserRole(undefined);
+                    setCurrentUserId(null);
+                }
             }
         });
         return () => subscription.unsubscribe();
@@ -172,31 +214,36 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, []);
 
   const login = async (emailOrUsername: string, password: string) => {
-    if (emailOrUsername === config.adminUsername && password === config.adminPassword) {
-        setUserRole('ADMIN');
-        setCurrentUserId('admin');
-        return { error: null };
-    }
-    const mockBarber = barbers.find(b => b.username === emailOrUsername && b.password === password);
-    if (mockBarber) {
-        setUserRole('BARBER');
-        setCurrentUserId(mockBarber.id);
-        return { error: null };
-    }
-    
     if (!navigator.onLine) {
-        return { error: "Sem conexão com internet para login" };
+      return { error: "Sem conexao com internet para login" };
     }
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: emailOrUsername,
-      password,
+    const { data, error } = await supabase.rpc('login_user', {
+      p_username: emailOrUsername,
+      p_password: password
     });
-    
-    if (error) return { error: error.message };
-    if (data.user) {
-        await checkUserRole(data.user.id);
+
+    if (error) return { error: "Erro ao conectar ao servidor" };
+    if (!data || !data.success) return { error: data?.error || "Usuario ou senha invalidos" };
+
+    const authEmail = data.auth_email;
+    if (!authEmail) return { error: "Erro de configuracao: email nao encontrado" };
+
+    const { error: authError } = await supabase.auth.signInWithPassword({
+      email: authEmail,
+      password: password
+    });
+
+    if (authError) {
+      console.error("Auth session error:", authError);
+      return { error: "Erro ao criar sessao: " + authError.message };
     }
+
+    setUserRole(data.role);
+    setCurrentUserId(data.user_id);
+
+    await fetchData(true);
+
     return { error: null };
   };
 
@@ -204,6 +251,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (navigator.onLine) await supabase.auth.signOut();
     setUserRole(undefined);
     setCurrentUserId(null);
+    localStorage.removeItem('barberpro_role');
+    localStorage.removeItem('barberpro_user_id');
   };
 
   // --- Data Fetching & Caching ---
@@ -225,6 +274,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               setExpenses(data.expenses || []);
               setRevenues(data.revenues || []);
               setAnnouncements(data.announcements || []);
+              setClients(data.clients || []);
               if (data.config) setConfig(prev => ({ ...prev, ...data.config }));
               console.info("Loaded from Local Cache");
               return true;
@@ -244,6 +294,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setAnnouncements(INITIAL_ANNOUNCEMENTS);
   };
 
+  const fetchDataRef = useRef<((isBackground?: boolean) => Promise<void>) | null>(null);
+
   const fetchData = async (isBackground: boolean = false) => {
     if (!isBackground) setLoading(true);
 
@@ -257,7 +309,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     try {
-      const { data: servicesData, error: servicesError } = await supabase.from('services').select('*').eq('active', true);
+      const [servicesResult, configResult, productsResult, barbersResult, expResult, revResult, annResult, clientsResult, aptResult] = await Promise.all([
+          supabase.from('services').select('*').eq('active', true),
+          supabase.from('app_config_public').select('*').limit(1).maybeSingle(),
+          supabase.from('products').select('*').eq('active', true),
+          supabase.from('barbers').select('*'),
+          supabase.from('expenses').select('*'),
+          supabase.from('revenues').select('*'),
+          supabase.from('announcements').select('*'),
+          supabase.from('clients').select('*'),
+          supabase.from('appointments').select('*')
+      ]);
+
+      const { data: servicesData, error: servicesError } = servicesResult;
       
       if (!servicesError) {
           setIsSupabaseConnected(true);
@@ -272,7 +336,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
          setServices(mappedServices);
 
           // Config
-          const { data: configData } = await supabase.from('app_config').select('*').limit(1).single();
+          const { data: configData } = configResult;
           let newConfig = { ...config };
           if (configData) {
               newConfig = {
@@ -285,15 +349,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                   closingHour: configData.closing_hour || config.closingHour,
                   openDays: configData.open_days || config.openDays,
                   logo: configData.logo || config.logo,
-                  primaryColor: configData.primary_color || config.primaryColor,
-                  adminUsername: configData.admin_username || config.adminUsername,
-                  adminPassword: configData.admin_password || config.adminPassword
-              };
+                  primaryColor: configData.primary_color || config.primaryColor
+                };
               setConfig(newConfig);
           }
 
           // Products
-          const { data: productsData } = await supabase.from('products').select('*').eq('active', true);
+          const { data: productsData } = productsResult;
           const mappedProducts = productsData ? productsData.map((p: any) => ({
              id: p.id,
              name: p.name,
@@ -306,18 +368,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setProducts(mappedProducts);
 
           // Barbers
-          const { data: barbersData } = await supabase.from('barbers').select(`*, profiles(name, role, email)`);
+          const { data: barbersData } = barbersResult;
           let mappedBarbers: Barber[] = [];
           if (barbersData) {
-              mappedBarbers = barbersData.map((b: any) => mapBarberFromDB(b, b.profiles));
-          } else {
-              const { data: simpleBarbers } = await supabase.from('barbers').select('*');
-              mappedBarbers = simpleBarbers ? simpleBarbers.map((b: any) => mapBarberFromDB(b, null)) : [];
+               mappedBarbers = barbersData.map((b: any) => mapBarberFromDB(b));
           }
           setBarbers(mappedBarbers);
 
           // Expenses
-          const { data: expData } = await supabase.from('expenses').select('*');
+          const { data: expData } = expResult;
           const mappedExpenses = expData ? expData.map((e: any) => ({
               id: e.id,
               description: e.description,
@@ -328,7 +387,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setExpenses(mappedExpenses);
 
           // Revenues
-          const { data: revData } = await supabase.from('revenues').select('*');
+          const { data: revData } = revResult;
           const mappedRevenues = revData ? revData.map((r: any) => ({
               id: r.id,
               description: r.description,
@@ -339,7 +398,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setRevenues(mappedRevenues);
 
           // Announcements
-          const { data: annData } = await supabase.from('announcements').select('*');
+          const { data: annData } = annResult;
           const mappedAnnouncements = annData ? annData.map((a: any) => ({
               id: a.id,
               title: a.title,
@@ -349,16 +408,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           })) : [];
           setAnnouncements(mappedAnnouncements);
 
+          // Clients
+          const { data: clientsData } = clientsResult;
+          const mappedClients: Client[] = clientsData ? clientsData.map((c: any) => ({
+              id: c.id,
+              name: c.name,
+              phone: c.phone || '',
+              email: c.email || '',
+              whatsapp: c.whatsapp || '',
+              notes: c.notes || '',
+              createdAt: c.created_at
+          })) : [];
+          setClients(mappedClients);
+
           // Appointments
-          const { data: aptData } = await supabase.from('appointments').select('*');
+          const { data: aptData } = aptResult;
           let mappedAppointments: Appointment[] = [];
           if (aptData) {
               mappedAppointments = aptData.map(mapAppointmentFromDB).map(apt => {
                    const sourceServices = mappedServices || []; 
-                   // @ts-ignore
-                   let s = sourceServices.find((s:any) => s.id === apt.serviceId);
+                   let s = sourceServices.find((sv) => sv.id === apt.serviceId);
                    if (!s) s = INITIAL_SERVICES.find(is => is.id === apt.serviceId);
-                   return { ...apt, totalPrice: s ? s.price : 0 };
+                   return { ...apt, totalPrice: apt.totalPrice || (s ? s.price : 0) };
               });
           }
           setAppointments(mappedAppointments);
@@ -372,6 +443,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               expenses: mappedExpenses,
               revenues: mappedRevenues,
               announcements: mappedAnnouncements,
+              clients: mappedClients,
               config: newConfig
           });
 
@@ -382,7 +454,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
 
     } catch (error) {
-      console.error("Error loading Supabase data:", error);
+      console.error("Error loading data:", error);
       setIsSupabaseConnected(false);
       if (!loadFromLocalStorage()) loadMockData();
     } finally {
@@ -390,8 +462,49 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
+  fetchDataRef.current = fetchData;
+
   useEffect(() => {
     fetchData();
+  }, []);
+
+  // --- Realtime Subscription ---
+  useEffect(() => {
+    const channel = supabase
+      .channel('db-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, () => fetchDataRef.current?.(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'services' }, () => fetchDataRef.current?.(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'barbers' }, () => fetchDataRef.current?.(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => fetchDataRef.current?.(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, () => fetchDataRef.current?.(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => fetchDataRef.current?.(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'revenues' }, () => fetchDataRef.current?.(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, () => fetchDataRef.current?.(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_config' }, () => fetchDataRef.current?.(true))
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
+  // --- Refresh on tab/mobile resume ---
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine) {
+        fetchDataRef.current?.(true);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
+
+  // --- Polling: sync with DB every 5s (reduced from 2s to lower Supabase load) ---
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible' && navigator.onLine) {
+        fetchDataRef.current?.(true);
+      }
+    }, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   const testConnection = async (): Promise<{ success: boolean; message: string }> => {
@@ -401,7 +514,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           }
           // Try to fetch a single row from a public table to verify read access
           // using 'app_config' as it is a singleton usually always present
-          const { data, error } = await supabase.from('app_config').select('id').limit(1);
+          const { data, error } = await supabase.from('app_config_public').select('id').limit(1);
           
           if (error) {
               console.error("Connection Test Error:", error);
@@ -430,23 +543,88 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         appointment_time: `${String(dateObj.getHours()).padStart(2, '0')}:${String(dateObj.getMinutes()).padStart(2, '0')}:00`,
         status: 'scheduled',
         notes: aptData.notes || '',
-        product_ids: aptData.productIds
+        product_ids: aptData.productIds || [],
+        total_price: aptData.totalPrice || 0
     };
 
+    // Remove null/undefined values
+    const cleanPayload: Record<string, any> = {};
+    for (const [key, val] of Object.entries(dbPayload)) {
+        cleanPayload[key] = val ?? (key === 'product_ids' ? [] : null);
+    }
+
     if (!navigator.onLine) {
-        addToOfflineQueue('appointments', 'INSERT', dbPayload);
+        addToOfflineQueue('appointments', 'INSERT', cleanPayload);
         return;
     }
 
     try {
-        const { data, error } = await supabase.from('appointments').insert([dbPayload]).select().single();
-        if (error) throw error;
+        const { data, error } = await supabase.from('appointments').insert([cleanPayload]).select().single();
+        if (error) {
+            console.error('[Appointment Error]', error.message, error.details, error.hint);
+            throw error;
+        }
         if (data) {
             setAppointments(prev => prev.map(a => a.id === tempId ? { ...a, id: data.id } : a));
         }
     } catch (e: any) {
-        console.warn("Offline/Error adding appointment, queuing...", e);
-        addToOfflineQueue('appointments', 'INSERT', dbPayload);
+        console.error('[Appointment Failed]', e?.message || e);
+        setAppointments(prev => prev.filter(a => a.id !== tempId));
+    }
+  };
+
+  const updateAppointment = async (id: string, updates: Partial<Appointment>) => {
+    setAppointments(prev => prev.map(a => a.id === id ? { ...a, ...updates } : a));
+    if (!isValidUuid(id)) return;
+
+    const dbUpdates: any = {};
+    if (updates.clientName !== undefined) dbUpdates.client_name = updates.clientName;
+    if (updates.serviceId !== undefined) dbUpdates.service_id = updates.serviceId;
+    if (updates.barberId !== undefined) dbUpdates.barber_id = updates.barberId;
+    if (updates.totalPrice !== undefined) dbUpdates.total_price = updates.totalPrice;
+    if (updates.notes !== undefined) dbUpdates.notes = updates.notes;
+    if (updates.status !== undefined) {
+        const statusToDb: Record<string, string> = {
+            'PENDING': 'scheduled',
+            'CONFIRMED': 'confirmed',
+            'IN_PROGRESS': 'in_progress',
+            'COMPLETED': 'finished',
+            'CANCELLED': 'canceled',
+            'NO_SHOW': 'no_show'
+        };
+        dbUpdates.status = statusToDb[updates.status] || 'scheduled';
+    }
+    if (updates.date !== undefined) {
+        const d = new Date(updates.date);
+        dbUpdates.appointment_date = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        dbUpdates.appointment_time = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:00`;
+    }
+
+    if (!navigator.onLine) {
+        addToOfflineQueue('appointments', 'UPDATE', { match: { id }, data: dbUpdates });
+        return;
+    }
+
+    try {
+        await supabase.from('appointments').update(dbUpdates).eq('id', id);
+    } catch (e) {
+        addToOfflineQueue('appointments', 'UPDATE', { match: { id }, data: dbUpdates });
+    }
+  };
+
+  const deleteAppointment = async (id: string) => {
+    setAppointments(prev => prev.filter(a => a.id !== id));
+    if (!isValidUuid(id)) return;
+
+    if (!navigator.onLine) {
+        addToOfflineQueue('appointments', 'DELETE', { match: { id } });
+        return;
+    }
+
+    try {
+        await supabase.from('appointments').delete().eq('id', id);
+    } catch (e) {
+        addToOfflineQueue('appointments', 'DELETE', { match: { id } });
     }
   };
 
@@ -454,10 +632,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setAppointments(prev => prev.map(a => a.id === id ? { ...a, status } : a));
     if (!isValidUuid(id)) return;
 
-    let dbStatus = 'scheduled';
-    if (status === 'COMPLETED') dbStatus = 'finished';
-    if (status === 'CANCELLED') dbStatus = 'canceled';
-    if (status === 'IN_PROGRESS') dbStatus = 'in_progress';
+    const statusToDb: Record<string, string> = {
+        'PENDING': 'scheduled',
+        'CONFIRMED': 'confirmed',
+        'IN_PROGRESS': 'in_progress',
+        'COMPLETED': 'finished',
+        'CANCELLED': 'canceled',
+        'NO_SHOW': 'no_show'
+    };
+    const dbStatus = statusToDb[status] || 'scheduled';
     
     if (!navigator.onLine) {
         addToOfflineQueue('appointments', 'UPDATE', { match: { id }, data: { status: dbStatus } });
@@ -539,24 +722,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setProducts(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
     if (!isValidUuid(id)) return;
 
-    const payload: any = {};
-    if(updates.name) payload.name = updates.name;
-    if(updates.description) payload.description = updates.description;
-    if(updates.price) payload.price = updates.price;
-    if(updates.stock) payload.stock = updates.stock;
-    if(updates.category) payload.category = updates.category;
-    if(updates.image) payload.image = updates.image;
+      const payload: any = {};
+      if(updates.name !== undefined) payload.name = updates.name;
+      if(updates.description !== undefined) payload.description = updates.description;
+      if(updates.price !== undefined) payload.price = updates.price;
+      if(updates.stock !== undefined) payload.stock = updates.stock;
+      if(updates.category !== undefined) payload.category = updates.category;
+      if(updates.image !== undefined) payload.image = updates.image;
 
-    if (!navigator.onLine) {
-        addToOfflineQueue('products', 'UPDATE', { match: { id }, data: payload });
-        return;
-    }
+      if (!navigator.onLine) {
+          addToOfflineQueue('products', 'UPDATE', { match: { id }, data: payload });
+          return;
+      }
 
-    try {
-        await supabase.from('products').update(payload).eq('id', id);
-    } catch(e) { 
-        addToOfflineQueue('products', 'UPDATE', { match: { id }, data: payload });
-    }
+      try {
+          await supabase.from('products').update(payload).eq('id', id);
+      } catch(e) { 
+          addToOfflineQueue('products', 'UPDATE', { match: { id }, data: payload });
+      }
   };
 
   const deleteProduct = async (id: string) => {
@@ -607,11 +790,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (!isValidUuid(id)) return;
 
       const payload: any = {};
-      if(updates.name) payload.name = updates.name;
-      if(updates.price) payload.price = updates.price;
-      if(updates.durationMinutes) payload.duration_minutes = updates.durationMinutes;
-      if(updates.description) payload.description = updates.description;
-      if(updates.image) payload.image = updates.image;
+      if(updates.name !== undefined) payload.name = updates.name;
+      if(updates.price !== undefined) payload.price = updates.price;
+      if(updates.durationMinutes !== undefined) payload.duration_minutes = updates.durationMinutes;
+      if(updates.description !== undefined) payload.description = updates.description;
+      if(updates.image !== undefined) payload.image = updates.image;
       
       if (!navigator.onLine) {
           addToOfflineQueue('services', 'UPDATE', { match: { id }, data: payload });
@@ -785,9 +968,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       // Optimistic Update
       setBarbers(prev => [...prev, { ...barber, id: tempId }]);
       
-      // Clean payload: Remove undefined values to avoid DB issues
-      const payload: any = {
+      // Clean payload: Remove undefined/null values to avoid DB issues
+      const rawPayload: Record<string, any> = {
             name: barber.name,
+            role: barber.role || 'BARBER',
             specialty: (barber.specialties || []).join(','),
             avatar: barber.avatar,
             rating: barber.rating,
@@ -800,8 +984,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             break_end: barber.breakEnd,
             active: true,
             username: barber.username,
-            password: barber.password
+            password: barber.password,
+            ...(barber.isOnBreak !== undefined ? { is_on_break: barber.isOnBreak } : {})
       };
+
+      // Remove null/undefined values to prevent Supabase errors
+      const payload: Record<string, any> = {};
+      for (const [key, val] of Object.entries(rawPayload)) {
+          if (val !== null && val !== undefined) {
+              payload[key] = val;
+          }
+      }
       
       // Only add email if valid username looks like email
       if (barber.username && barber.username.includes('@')) {
@@ -817,19 +1010,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
          const { data, error } = await supabase.from('barbers').insert([payload]).select().single();
          
          if (error) {
-             console.error("Supabase Insert Error:", error);
              throw error;
          }
          
-         if(data) {
-             // Update local state with Real ID from DB
-             setBarbers(prev => prev.map(b => b.id === tempId ? { ...b, id: data.id } : b));
-             // Trigger background refresh to ensure consistency
-             fetchData(true);
-         }
-      } catch(e) { 
-          console.warn("Falling back to offline queue due to error:", e);
-          addToOfflineQueue('barbers', 'INSERT', payload);
+          if(data) {
+              setBarbers(prev => prev.map(b => b.id === tempId ? { ...b, id: data.id } : b));
+              fetchData(true);
+
+              if (barber.username && barber.password) {
+                  const authEmail = 'barber_' + barber.name.toLowerCase().replace(/\s+/g, '_').replace(/\./g, '') + '@barbershop.app';
+                  try {
+                      await supabase.rpc('create_barber_auth_user', {
+                          p_email: authEmail,
+                          p_password: barber.password,
+                          p_name: barber.name,
+                          p_role: barber.role || 'BARBER'
+                      });
+                  } catch (authErr) {
+                      console.warn('Auth user creation failed (non-critical):', authErr);
+                  }
+              }
+          }
+      } catch(e: any) { 
+          setBarbers(prev => prev.filter(b => b.id !== tempId));
+          throw e;
       }
   };
 
@@ -839,6 +1043,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       const payload: any = {};
       if(updates.name) payload.name = updates.name;
+      if(updates.role) payload.role = updates.role;
       if(updates.specialties) payload.specialty = updates.specialties.join(',');
       if(updates.avatar) payload.avatar = updates.avatar;
       if(updates.commissionRate !== undefined) payload.commission_rate = updates.commissionRate;
@@ -850,6 +1055,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if(updates.breakEnd !== undefined) payload.break_end = updates.breakEnd;
       if(updates.username) payload.username = updates.username;
       if(updates.password) payload.password = updates.password;
+      if(updates.isOnBreak !== undefined) payload.is_on_break = updates.isOnBreak;
 
       if (!navigator.onLine) {
           addToOfflineQueue('barbers', 'UPDATE', { match: { id }, data: payload });
@@ -858,6 +1064,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       try {
           await supabase.from('barbers').update(payload).eq('id', id);
+
+          if (updates.password) {
+              const { data: profileData } = await supabase
+                  .from('barbers').select('profile_id').eq('id', id).single();
+              if (profileData?.profile_id) {
+                  await supabase.rpc('update_auth_password', {
+                      p_user_id: profileData.profile_id,
+                      p_new_password: updates.password
+                  });
+              }
+          }
       } catch(e) { 
           addToOfflineQueue('barbers', 'UPDATE', { match: { id }, data: payload });
       }
@@ -971,6 +1188,83 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
+  // --- Client Management ---
+  const addClient = async (client: Omit<Client, 'id'>): Promise<Client> => {
+    const tempId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substr(2, 9) + '-' + Date.now();
+
+    const dbPayload = {
+      name: client.name,
+      phone: client.phone || '',
+      email: client.email || '',
+      whatsapp: client.whatsapp || '',
+      notes: client.notes || ''
+    };
+
+    if (!navigator.onLine) {
+      const newClient: Client = { ...client, id: tempId };
+      setClients(prev => [...prev, newClient]);
+      addToOfflineQueue('clients', 'INSERT', dbPayload);
+      return newClient;
+    }
+
+    try {
+      const { data, error } = await supabase.from('clients').insert([dbPayload]).select().single();
+      if (error) {
+        console.error('[Supabase] Erro ao inserir cliente:', error.message, error);
+        throw error;
+      }
+      if (data) {
+        const savedClient: Client = {
+          id: data.id,
+          name: data.name,
+          phone: data.phone || '',
+          email: data.email || '',
+          whatsapp: data.whatsapp || '',
+          notes: data.notes || '',
+          createdAt: data.created_at
+        };
+        setClients(prev => [...prev, savedClient]);
+        return savedClient;
+      }
+    } catch (e) {
+      console.error('[Supabase] Falha ao salvar cliente:', e);
+      throw e;
+    }
+    return { ...client, id: tempId };
+  };
+
+  const findClientByPhone = (phone: string): Client | undefined => {
+    if (!phone) return undefined;
+    const clean = phone.replace(/\D/g, '');
+    return clients.find(c => {
+      if (!c.phone) return false;
+      return c.phone.replace(/\D/g, '') === clean;
+    });
+  };
+
+  const updateClient = async (id: string, updates: Partial<Client>) => {
+    setClients(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+    if (!isValidUuid(id)) return;
+
+    const payload: any = {};
+    if (updates.name) payload.name = updates.name;
+    if (updates.phone !== undefined) payload.phone = updates.phone;
+    if (updates.email !== undefined) payload.email = updates.email;
+    if (updates.whatsapp !== undefined) payload.whatsapp = updates.whatsapp;
+    if (updates.notes !== undefined) payload.notes = updates.notes;
+
+    if (!navigator.onLine) {
+      addToOfflineQueue('clients', 'UPDATE', { match: { id }, data: payload });
+      return;
+    }
+
+    try {
+      await supabase.from('clients').update(payload).eq('id', id);
+    } catch (e) {
+      addToOfflineQueue('clients', 'UPDATE', { match: { id }, data: payload });
+    }
+  };
+
   const seedDatabase = async () => {
       if(!navigator.onLine) {
           alert("Necessário conexão para popular o banco.");
@@ -978,17 +1272,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
       setLoading(true);
       try {
+          // Insert services without fixed IDs - let Supabase generate UUIDs
           for (const s of INITIAL_SERVICES) {
-              await supabase.from('services').insert({ ...s, image: s.image, duration_minutes: s.durationMinutes, active: true });
+              const { id: _id, ...serviceData } = s;
+              await supabase.from('services').insert({ ...serviceData, duration_minutes: serviceData.durationMinutes, active: true });
           }
+          // Insert products without fixed IDs - let Supabase generate UUIDs
           for (const p of INITIAL_PRODUCTS) {
-              await supabase.from('products').insert({ ...p, active: true });
+              const { id: _id, ...productData } = p;
+              await supabase.from('products').insert({ ...productData, active: true });
           }
           await fetchData();
       } catch (e) { console.error(e); } finally { setLoading(false); }
   };
 
-  const updateConfig = async (newConfig: Partial<AppConfig>) => {
+  const updateConfig = async (newConfig: Partial<AppConfig>): Promise<string | null> => {
       setConfig(prev => ({ ...prev, ...newConfig }));
       
       const payload: any = { id: 1 };
@@ -1003,25 +1301,38 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (newConfig.primaryColor !== undefined) payload.primary_color = newConfig.primaryColor;
       if (newConfig.adminUsername !== undefined) payload.admin_username = newConfig.adminUsername;
       if (newConfig.adminPassword !== undefined) payload.admin_password = newConfig.adminPassword;
+      if (newConfig.caixaUsername !== undefined) payload.caixa_username = newConfig.caixaUsername;
+      if (newConfig.caixaPassword !== undefined) payload.caixa_password = newConfig.caixaPassword;
 
       if (!navigator.onLine) {
           addToOfflineQueue('app_config', 'UPSERT', payload);
-          return;
+          return 'Salvo offline - será sincronizado quando voltar a conexão.';
       }
 
+      const { data: sessionData } = await supabase.auth.getSession();
+      console.log("Session check before config save:", sessionData.session ? "ACTIVE" : "NO SESSION");
+
       try {
-          const { error } = await supabase.from('app_config').upsert(payload);
-          if (error) throw error;
-      } catch (e) {
+          const { data, error } = await supabase.from('app_config').upsert(payload).select();
+          if (error) {
+              console.error("Supabase Config Upsert Error:", JSON.stringify(error));
+              addToOfflineQueue('app_config', 'UPSERT', payload);
+              return `Erro ao salvar no banco: ${error.message} (verifique o console para detalhes)`;
+          }
+          console.log("Config saved successfully:", data);
+          return null;
+      } catch (e: any) {
+          console.error("Config save failed:", e);
           addToOfflineQueue('app_config', 'UPSERT', payload);
+          return `Falha na conexão: ${e.message || e}`;
       }
   };
 
   return (
     <AppContext.Provider value={{ 
-        config, services, barbers, products, appointments, expenses, revenues, announcements, loading, isSupabaseConnected,
+        config, services, barbers, products, appointments, expenses, revenues, announcements, clients, loading, isSupabaseConnected,
         userRole, currentUserId, login, logout,
-        addAppointment, updateAppointmentStatus, updateProductStock, updateConfig, 
+        addAppointment, updateAppointment, deleteAppointment, updateAppointmentStatus, updateProductStock, updateConfig, 
         addBarber, updateBarber, deleteBarber,
         addProduct, updateProduct, deleteProduct,
         payCommission, updateAppointmentCommission,
@@ -1030,6 +1341,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         addService, updateService, deleteService,
         confirmArrival,
         addAnnouncement, deleteAnnouncement, toggleAnnouncement,
+        addClient, findClientByPhone, updateClient,
         seedDatabase,
         refreshData: fetchData,
         testConnection

@@ -1,27 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { useAppStore } from '../store';
-import { Clock, CheckCircle, Calendar, DollarSign, Briefcase, TrendingUp, Filter, AlertCircle, UserCheck, Activity, Wifi, Edit, Save, X, Coffee, Play, CheckSquare, RefreshCw } from 'lucide-react';
-import { Appointment } from '../types';
+import { Clock, CheckCircle, Calendar, DollarSign, Briefcase, TrendingUp, Filter, AlertCircle, UserCheck, Activity, Wifi, Edit, Save, X, Coffee, Play, CheckSquare, RefreshCw, UserPlus, Phone, Globe, Search, Lock, Plus, MessageCircle } from 'lucide-react';
+import { Appointment, Client } from '../types';
+import { formatPhone } from '../utils';
 
 interface BarberDashboardProps {
     currentBarberId?: string | null;
 }
 
 export const BarberDashboard: React.FC<BarberDashboardProps> = ({ currentBarberId }) => {
-  const { appointments, barbers, services, confirmArrival, updateBarber, updateAppointmentStatus, refreshData, loading } = useAppStore();
+  const { appointments, barbers, services, confirmArrival, updateBarber, updateAppointmentStatus, refreshData, loading, clients, addClient, config } = useAppStore();
   
-  // Use the passed ID, or fallback to 'b1' if null (though login should handle this)
-  const activeId = currentBarberId || 'b1';
+  // Use the passed ID - if null, try to find first barber, otherwise show empty state
+  const activeId = currentBarberId || barbers[0]?.id || null;
 
   // Force refresh when component mounts, but in BACKGROUND mode (true) to avoid unmounting the app
   useEffect(() => {
     refreshData(true);
   }, []);
 
-  const currentBarber = barbers.find(b => b.id === activeId);
+  const currentBarber = activeId ? barbers.find(b => b.id === activeId) : null;
   const commissionRate = currentBarber?.commissionRate || 0.5;
 
-  const [activeTab, setActiveTab] = useState<'TODAY' | 'WEEK' | 'MONTH'>('TODAY');
+  const [activeTab, setActiveTab] = useState<'TODAY' | 'WEEK' | 'MONTH' | 'CLIENTES'>('TODAY');
   
   // Schedule Modal State
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
@@ -35,8 +36,17 @@ export const BarberDashboard: React.FC<BarberDashboardProps> = ({ currentBarberI
   // Finish Confirmation Modal State
   const [finishingAptId, setFinishingAptId] = useState<string | null>(null);
 
+  // Client States
+  const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [editingClient, setEditingClient] = useState<Partial<Client> | null>(null);
+  const [clientSearchTerm, setClientSearchTerm] = useState('');
+  const [isClientSecurityOpen, setIsClientSecurityOpen] = useState(false);
+  const [clientSecurityPassword, setClientSecurityPassword] = useState('');
+  const [clientSuccessMsg, setClientSuccessMsg] = useState('');
+
   // Real-time State
   const [now, setNow] = useState(new Date());
+  const isOnBreak = currentBarber?.isOnBreak || false;
 
   // Effect to update the clock every 30 seconds
   useEffect(() => {
@@ -57,7 +67,9 @@ export const BarberDashboard: React.FC<BarberDashboardProps> = ({ currentBarberI
   endOfWeek.setHours(23,59,59,999);
 
   // Filter Appointments for the logged-in barber
-  const barberAppointments = appointments.filter(a => a.barberId === activeId && a.status !== 'CANCELLED');
+  const barberAppointments = activeId 
+    ? appointments.filter(a => a.barberId === activeId && a.status !== 'CANCELLED')
+    : [];
 
   const todayApts = barberAppointments.filter(a => {
       const d = new Date(a.date);
@@ -136,6 +148,25 @@ export const BarberDashboard: React.FC<BarberDashboardProps> = ({ currentBarberI
       updateAppointmentStatus(id, 'IN_PROGRESS');
   };
 
+  const handleSendWhatsApp = (apt: Appointment) => {
+      const client = apt.clientId ? clients.find(c => c.id === apt.clientId) : undefined;
+      const whatsapp = client?.whatsapp || client?.phone || '';
+      
+      if (!whatsapp) {
+          alert('Número de WhatsApp não encontrado para este cliente.');
+          return;
+      }
+      
+      const cleanNumber = whatsapp.replace(/\D/g, '');
+      const message = encodeURIComponent(
+          `Olá ${apt.clientName}! Aqui é da ${config.name || 'BarberShop'}. ` +
+          `Estamos te chamando para informar que você é o próximo a ser atendido! ` +
+          `Por favor, dirija-se ao estabelecimento. Aguardamos você! 💈`
+      );
+      
+      window.open(`https://wa.me/55${cleanNumber}?text=${message}`, '_blank');
+  };
+
   const openFinishModal = (id: string) => {
       setFinishingAptId(id);
   };
@@ -178,8 +209,50 @@ export const BarberDashboard: React.FC<BarberDashboardProps> = ({ currentBarberI
       alert("Horários atualizados com sucesso!");
   };
 
+  const toggleBreak = async () => {
+      await updateBarber(activeId, { isOnBreak: !isOnBreak });
+  };
+
+  const handleSaveClient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingClient || !editingClient.name?.trim()) return;
+    setIsClientModalOpen(false);
+    setIsClientSecurityOpen(true);
+  };
+
+  const handleConfirmSaveClient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsClientSecurityOpen(false);
+    try {
+      await addClient({
+        name: editingClient!.name,
+        phone: editingClient!.phone || '',
+        email: editingClient!.email || '',
+        whatsapp: editingClient!.whatsapp || '',
+        notes: editingClient!.notes || ''
+      });
+      setEditingClient(null);
+      setClientSuccessMsg('Cliente cadastrado com sucesso!');
+      setTimeout(() => setClientSuccessMsg(''), 3000);
+    } catch (err) {
+      console.error('Erro ao salvar cliente:', err);
+      alert('Erro ao salvar cliente no banco de dados. Tente novamente.');
+    }
+  };
+
   return (
     <div className="space-y-8">
+       {/* No Barber Found State */}
+       {!activeId && (
+         <div className="text-center py-16 bg-slate-900 rounded-2xl border border-slate-800">
+           <AlertCircle size={48} className="mx-auto text-slate-600 mb-4" />
+           <h2 className="text-xl font-bold text-white mb-2">Nenhum profissional encontrado</h2>
+           <p className="text-slate-400">Faça login novamente ou contate o administrador.</p>
+         </div>
+       )}
+
+       {activeId && (
+       <>
        {/* Header Profile */}
        <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-900 p-6 rounded-xl border border-slate-800 gap-4 relative overflow-hidden">
         {/* Live Indicator Background Effect */}
@@ -189,8 +262,8 @@ export const BarberDashboard: React.FC<BarberDashboardProps> = ({ currentBarberI
 
         <div className="flex items-center gap-4 z-10 w-full md:w-auto">
             <div className="relative">
-                <img src={currentBarber?.avatar || "https://images.unsplash.com/photo-1583543735309-b5f70a75cdbd?auto=format&fit=crop&w=500&q=80"} alt={currentBarber?.name} className="w-16 h-16 rounded-full border-2 border-gold-500 object-cover" />
-                <div className="absolute bottom-0 right-0 w-4 h-4 bg-green-500 border-2 border-slate-900 rounded-full"></div>
+                <img src={currentBarber?.avatar || "https://images.unsplash.com/photo-1583543735309-b5f70a75cdbd?auto=format&fit=crop&w=500&q=80"} alt={currentBarber?.name} className={`w-16 h-16 rounded-full border-2 object-cover ${isOnBreak ? 'border-yellow-500 opacity-60' : 'border-gold-500'}`} />
+                <div className={`absolute bottom-0 right-0 w-4 h-4 border-2 border-slate-900 rounded-full ${isOnBreak ? 'bg-yellow-500' : 'bg-green-500'}`}></div>
             </div>
             <div className="flex-1">
                 <div className="flex items-center justify-between md:justify-start gap-3">
@@ -202,11 +275,17 @@ export const BarberDashboard: React.FC<BarberDashboardProps> = ({ currentBarberI
                         <Edit size={18} />
                     </button>
                 </div>
-                <div className="flex items-center gap-2 text-slate-400 text-sm mt-1">
+                <div className="flex items-center gap-2 text-slate-400 text-sm mt-1 flex-wrap">
                     <span className="px-2 py-0.5 bg-slate-800 rounded text-gold-500 font-bold text-xs">{(commissionRate * 100).toFixed(0)}% Comissão</span>
-                    <span className="flex items-center gap-1 text-green-500 text-xs font-bold uppercase tracking-wide">
-                        <Wifi size={10} /> Online
-                    </span>
+                    {isOnBreak ? (
+                        <span className="flex items-center gap-1 text-yellow-500 text-xs font-bold uppercase tracking-wide">
+                            <Coffee size={10} /> Em Intervalo
+                        </span>
+                    ) : (
+                        <span className="flex items-center gap-1 text-green-500 text-xs font-bold uppercase tracking-wide">
+                            <Wifi size={10} /> Online
+                        </span>
+                    )}
                 </div>
                 {/* Schedule Display */}
                 <div className="flex items-center gap-3 mt-2 text-xs text-slate-500">
@@ -233,6 +312,18 @@ export const BarberDashboard: React.FC<BarberDashboardProps> = ({ currentBarberI
             <div className="hidden md:block text-xl font-bold text-white capitalize mb-1">
                 {now.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
             </div>
+
+            <button 
+                onClick={toggleBreak}
+                className={`flex items-center gap-2 text-xs px-4 py-2 rounded-lg font-bold transition-colors border ${
+                    isOnBreak 
+                        ? 'bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-500 border-yellow-500/30 animate-pulse' 
+                        : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-white'
+                }`}
+            >
+                <Coffee size={14} />
+                {isOnBreak ? 'Voltar ao Serviço' : 'Intervalo'}
+            </button>
             
             <button 
                 onClick={handleOpenSchedule}
@@ -245,7 +336,7 @@ export const BarberDashboard: React.FC<BarberDashboardProps> = ({ currentBarberI
 
       {/* Tabs */}
       <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-        <div className="grid grid-cols-3 md:flex p-1 bg-slate-900 border border-slate-800 rounded-lg w-full md:w-fit gap-1 md:gap-0">
+        <div className="grid grid-cols-4 md:flex p-1 bg-slate-900 border border-slate-800 rounded-lg w-full md:w-fit gap-1 md:gap-0">
             <button 
                 onClick={() => setActiveTab('TODAY')}
                 className={`px-2 md:px-6 py-2 rounded-md text-xs md:text-sm font-bold transition-all ${activeTab === 'TODAY' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
@@ -264,6 +355,12 @@ export const BarberDashboard: React.FC<BarberDashboardProps> = ({ currentBarberI
             >
                 Mês
             </button>
+            <button 
+                onClick={() => setActiveTab('CLIENTES')}
+                className={`px-2 md:px-6 py-2 rounded-md text-xs md:text-sm font-bold transition-all ${activeTab === 'CLIENTES' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
+            >
+                Clientes
+            </button>
         </div>
         <div className="text-xs text-slate-500 font-medium flex items-center gap-1">
             <Clock size={12} /> Atualização em tempo real
@@ -271,6 +368,8 @@ export const BarberDashboard: React.FC<BarberDashboardProps> = ({ currentBarberI
       </div>
 
       {/* Stats Row */}
+      {activeTab !== 'CLIENTES' && (
+      <>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <StatCard 
             label="Minha Comissão (Realizada)" 
@@ -381,15 +480,26 @@ export const BarberDashboard: React.FC<BarberDashboardProps> = ({ currentBarberI
                                             </button>
                                         )}
                                         
-                                        {canStart && (
-                                            <button 
-                                                onClick={() => handleStartService(apt.id)}
-                                                className="flex-1 md:flex-none py-2 px-4 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 hover:border-blue-500/50 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2"
-                                            >
-                                                <Play size={14} />
-                                                Iniciar
-                                            </button>
-                                        )}
+                                         {canStart && (
+                                             <button 
+                                                 onClick={() => handleStartService(apt.id)}
+                                                 className="flex-1 md:flex-none py-2 px-4 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 hover:border-blue-500/50 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2"
+                                             >
+                                                 <Play size={14} />
+                                                 Iniciar
+                                             </button>
+                                         )}
+
+                                         {activeTab === 'TODAY' && apt.status === 'PENDING' && (
+                                             <button 
+                                                 onClick={() => handleSendWhatsApp(apt)}
+                                                 className="flex-1 md:flex-none py-2 px-4 bg-green-600/20 hover:bg-green-600/30 text-green-400 border border-green-500/30 hover:border-green-500/50 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2"
+                                                 title="Notificar cliente via WhatsApp"
+                                             >
+                                                 <MessageCircle size={14} />
+                                                 WhatsApp
+                                             </button>
+                                         )}
 
                                         {canFinish && (
                                             <button 
@@ -409,6 +519,79 @@ export const BarberDashboard: React.FC<BarberDashboardProps> = ({ currentBarberI
             </div>
         )}
       </div>
+      </>
+      )}
+
+      {/* CLIENTES Tab */}
+      {activeTab === 'CLIENTES' && (
+        <div className="space-y-6">
+          {clientSuccessMsg && (
+            <div className="bg-green-500/10 border border-green-500/30 text-green-500 px-4 py-3 rounded-xl flex items-center gap-2 font-medium animate-fade-in">
+              <CheckCircle size={20} /> {clientSuccessMsg}
+            </div>
+          )}
+
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="relative flex-1 w-full">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+              <input 
+                type="text" 
+                value={clientSearchTerm}
+                onChange={(e) => setClientSearchTerm(e.target.value)}
+                placeholder="Buscar cliente por nome, telefone ou email..."
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 pl-10 text-white text-sm focus:outline-none focus:border-gold-500"
+              />
+            </div>
+            <button 
+              onClick={() => { setEditingClient({ name: '', phone: '', email: '', whatsapp: '', notes: '' }); setIsClientModalOpen(true); }}
+              className="bg-gold-500 hover:bg-gold-400 text-slate-900 px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-lg shadow-gold-900/20 whitespace-nowrap"
+            >
+              <Plus size={18} /> Novo Cliente
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            {clients.filter(c => {
+              if (!clientSearchTerm) return true;
+              const term = clientSearchTerm.toLowerCase();
+              return (c.name?.toLowerCase().includes(term) || c.phone?.toLowerCase().includes(term) || c.email?.toLowerCase().includes(term));
+            }).length === 0 ? (
+              <div className="bg-slate-900/50 rounded-xl border border-slate-800 border-dashed p-8 text-center">
+                <UserPlus size={40} className="mx-auto text-slate-600 mb-3 opacity-50" />
+                <p className="text-slate-500 text-sm">
+                  {clients.length === 0 ? 'Nenhum cliente cadastrado ainda.' : 'Nenhum cliente encontrado para esta busca.'}
+                </p>
+              </div>
+            ) : (
+              clients.filter(c => {
+                if (!clientSearchTerm) return true;
+                const term = clientSearchTerm.toLowerCase();
+                return (c.name?.toLowerCase().includes(term) || c.phone?.toLowerCase().includes(term) || c.email?.toLowerCase().includes(term));
+              }).map(client => (
+                <div key={client.id} className="bg-slate-800/50 p-3 rounded-lg flex justify-between items-center">
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <div className="w-10 h-10 bg-slate-800 rounded-full flex items-center justify-center border border-slate-700 flex-shrink-0">
+                      <span className="text-sm font-bold text-gold-500">{client.name?.charAt(0)?.toUpperCase()}</span>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold text-white truncate">{client.name}</div>
+                      <div className="text-[10px] text-slate-500 flex flex-wrap gap-2">
+                        {client.phone && <span className="flex items-center gap-1"><Phone size={10} /> {client.phone}</span>}
+                        {client.email && <span className="flex items-center gap-1"><Globe size={10} /> {client.email}</span>}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 ml-2">
+                    <div className="text-[10px] text-slate-500 bg-slate-800 px-2 py-1 rounded border border-slate-700 whitespace-nowrap">
+                      {appointments.filter(a => a.clientId === client.id).length} agend.
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Schedule Management Modal */}
       {isScheduleModalOpen && (
@@ -525,6 +708,137 @@ export const BarberDashboard: React.FC<BarberDashboardProps> = ({ currentBarberI
             </div>
          </div>
       )}
+
+      {/* Client Modal */}
+      {isClientModalOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
+          <div className="bg-slate-900 p-6 rounded-2xl w-full max-w-md border border-slate-800 shadow-2xl animate-fade-in">
+            <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+              <UserPlus size={20} className="text-gold-500" />
+              Novo Cliente
+            </h3>
+            <form onSubmit={handleSaveClient} className="space-y-4">
+              <div>
+                <label className="block text-xs text-slate-500 font-bold uppercase mb-1">Nome *</label>
+                <input 
+                  type="text" 
+                  placeholder="Nome completo" 
+                  className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white focus:outline-none focus:border-gold-500" 
+                  value={editingClient?.name || ''} 
+                  onChange={e => setEditingClient(prev => ({ ...prev!, name: e.target.value }))}
+                  required 
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-slate-500 font-bold uppercase mb-1">Telefone</label>
+                  <input 
+                    type="text" 
+                    placeholder="(00) 00000-0000" 
+                    className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white focus:outline-none focus:border-gold-500" 
+                    value={editingClient?.phone || ''} 
+                    onChange={e => setEditingClient(prev => ({ ...prev!, phone: formatPhone(e.target.value) }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 font-bold uppercase mb-1">WhatsApp</label>
+                  <input 
+                    type="text" 
+                    placeholder="(00) 00000-0000" 
+                    className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white focus:outline-none focus:border-gold-500" 
+                    value={editingClient?.whatsapp || ''} 
+                    onChange={e => setEditingClient(prev => ({ ...prev!, whatsapp: formatPhone(e.target.value) }))}
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 font-bold uppercase mb-1">Email</label>
+                <input 
+                  type="email" 
+                  placeholder="email@exemplo.com" 
+                  className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white focus:outline-none focus:border-gold-500" 
+                  value={editingClient?.email || ''} 
+                  onChange={e => setEditingClient(prev => ({ ...prev!, email: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 font-bold uppercase mb-1">Observações</label>
+                <textarea 
+                  placeholder="Preferências, restrições, etc..." 
+                  className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white text-sm focus:outline-none focus:border-gold-500 min-h-[80px]" 
+                  value={editingClient?.notes || ''} 
+                  onChange={e => setEditingClient(prev => ({ ...prev!, notes: e.target.value }))}
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button 
+                  type="button" 
+                  onClick={() => { setIsClientModalOpen(false); setEditingClient(null); }} 
+                  className="flex-1 p-3 rounded-lg bg-slate-800 text-white hover:bg-slate-700 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit" 
+                  className="flex-1 p-3 rounded-lg bg-gold-500 text-slate-900 font-bold hover:bg-gold-400 transition-colors"
+                >
+                  Salvar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Client Security Confirmation Modal */}
+      {isClientSecurityOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
+          <div className="bg-slate-900 p-6 rounded-2xl w-full max-w-sm border border-slate-800 shadow-2xl animate-fade-in">
+            <div className="flex justify-center mb-4">
+              <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center text-gold-500 border border-slate-700">
+                <Lock size={32} />
+              </div>
+            </div>
+            <h3 className="text-xl font-bold text-white mb-2 text-center">
+              Confirmação de Segurança
+            </h3>
+            <p className="text-slate-400 text-sm text-center mb-6">
+              Por favor, confirme sua senha administrativa para salvar o cliente.
+            </p>
+            <form onSubmit={handleConfirmSaveClient} className="space-y-4">
+              <div>
+                <label className="block text-xs text-slate-500 font-bold uppercase mb-1">Senha Atual</label>
+                <input 
+                  type="password" 
+                  autoFocus
+                  placeholder="Digite sua senha..." 
+                  className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white focus:outline-none focus:border-gold-500" 
+                  value={clientSecurityPassword} 
+                  onChange={e => setClientSecurityPassword(e.target.value)} 
+                  required 
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button 
+                  type="button" 
+                  onClick={() => { setIsClientSecurityOpen(false); setClientSecurityPassword(''); }} 
+                  className="flex-1 p-3 rounded-lg bg-slate-800 text-white hover:bg-slate-700 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit" 
+                  className="flex-1 p-3 rounded-lg bg-gold-500 text-slate-900 font-bold hover:bg-gold-400 transition-colors"
+                >
+                  Confirmar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      </>
+       )}
     </div>
   );
 };

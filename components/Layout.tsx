@@ -1,18 +1,30 @@
 import React from 'react';
 import { useAppStore } from '../store';
-import { LogIn, Scissors, Menu, X, ArrowLeft, WifiOff } from 'lucide-react';
+import { LogIn, Scissors, Menu, X, ArrowLeft, WifiOff, ChevronDown } from 'lucide-react';
 
 interface LayoutProps {
   children: React.ReactNode;
   view: string;
   navigate: (view: string) => void;
-  role?: 'CLIENT' | 'BARBER' | 'ADMIN';
+  role?: 'CLIENT' | 'BARBER' | 'ADMIN' | 'CAIXA';
   handleLogout?: () => void;
 }
 
 export const Layout: React.FC<LayoutProps> = ({ children, view, navigate, role, handleLogout }) => {
   const { config, isSupabaseConnected, loading } = useAppStore();
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const menuRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const isHome = view === 'client-home';
 
@@ -45,11 +57,11 @@ export const Layout: React.FC<LayoutProps> = ({ children, view, navigate, role, 
             </div>
 
             {/* Desktop Navigation */}
-            <div className="hidden md:flex items-center space-x-4">
+            <div className="hidden md:flex items-center" ref={menuRef}>
               {role ? (
                 <div className="flex items-center gap-4">
                   <span className="px-3 py-1 bg-slate-800 rounded-full text-xs font-semibold text-gold-500 border border-slate-700">
-                    {role === 'ADMIN' ? 'PAINEL MASTER' : 'PAINEL BARBEIRO'}
+                    {role === 'ADMIN' ? 'PAINEL MASTER' : role === 'CAIXA' ? 'CAIXA' : 'PAINEL BARBEIRO'}
                   </span>
                   <button 
                     onClick={handleLogout}
@@ -59,19 +71,45 @@ export const Layout: React.FC<LayoutProps> = ({ children, view, navigate, role, 
                   </button>
                 </div>
               ) : (
-                <div className="flex items-center gap-4">
+                <div className="relative">
                   <button 
-                    onClick={() => navigate('login-barber')}
-                    className="text-sm text-slate-400 hover:text-gold-400 transition-colors"
+                    onClick={() => setMenuOpen(!menuOpen)}
+                    className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-md text-sm font-medium transition-colors border border-slate-700"
                   >
-                    Área do Barbeiro
+                    <Menu size={18} />
+                    MENU
+                    <ChevronDown size={16} className={`transition-transform ${menuOpen ? 'rotate-180' : ''}`} />
                   </button>
-                  <button 
-                    onClick={() => navigate('login-admin')}
-                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-md text-sm font-medium transition-colors border border-slate-700"
-                  >
-                    Admin
-                  </button>
+                  
+                  {menuOpen && (
+                    <div className="absolute right-0 mt-2 w-56 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-2 z-50">
+                      <button 
+                        onClick={() => { navigate('client-home'); setMenuOpen(false); }}
+                        className="block w-full text-left px-4 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
+                      >
+                        Inicio
+                      </button>
+                      <div className="border-t border-slate-700 my-1"></div>
+                      <button 
+                        onClick={() => { navigate('login-barber'); setMenuOpen(false); }}
+                        className="block w-full text-left px-4 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
+                      >
+                        Area do Barbeiro
+                      </button>
+                      <button 
+                        onClick={() => { navigate('login-caixa'); setMenuOpen(false); }}
+                        className="block w-full text-left px-4 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
+                      >
+                        Caixa
+                      </button>
+                      <button 
+                        onClick={() => { navigate('login-admin'); setMenuOpen(false); }}
+                        className="block w-full text-left px-4 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
+                      >
+                        Admin
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -90,7 +128,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, view, navigate, role, 
           <div className="md:hidden bg-slate-900 border-b border-slate-800 px-4 py-4 space-y-3">
              {role ? (
                 <>
-                  <div className="text-gold-500 font-bold mb-2">{role} DASHBOARD</div>
+                   <div className="text-gold-500 font-bold mb-2">{role === 'CAIXA' ? 'CAIXA' : role + ' DASHBOARD'}</div>
                   <button 
                     onClick={() => { handleLogout?.(); setMobileMenuOpen(false); }}
                     className="block w-full text-left py-2 text-slate-300 hover:text-white"
@@ -101,10 +139,23 @@ export const Layout: React.FC<LayoutProps> = ({ children, view, navigate, role, 
               ) : (
                 <>
                   <button 
+                    onClick={() => { navigate('client-home'); setMobileMenuOpen(false); }}
+                    className="block w-full text-left py-2 text-slate-300 hover:text-white"
+                  >
+                    Inicio
+                  </button>
+                  <div className="border-t border-slate-700 my-2"></div>
+                  <button 
                     onClick={() => { navigate('login-barber'); setMobileMenuOpen(false); }}
                     className="block w-full text-left py-2 text-slate-300 hover:text-white"
                   >
                     Login Barbeiro
+                  </button>
+                  <button 
+                    onClick={() => { navigate('login-caixa'); setMobileMenuOpen(false); }}
+                    className="block w-full text-left py-2 text-slate-300 hover:text-white"
+                  >
+                    Login Caixa
                   </button>
                   <button 
                     onClick={() => { navigate('login-admin'); setMobileMenuOpen(false); }}
@@ -120,7 +171,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, view, navigate, role, 
 
       {/* Main Content */}
       <main className="flex-grow max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6">
-        {!isHome && !role && view !== 'login-barber' && view !== 'login-admin' && (
+        {!isHome && !role && view !== 'login-barber' && view !== 'login-admin' && view !== 'login-caixa' && (
           <button 
             onClick={() => navigate('client-home')} 
             className="mb-6 flex items-center text-slate-400 hover:text-gold-500 transition-colors"

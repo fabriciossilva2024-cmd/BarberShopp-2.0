@@ -12,6 +12,7 @@ const ClientTeam = React.lazy(() => import('./views/ClientTeam').then(m => ({ de
 const ClientProducts = React.lazy(() => import('./views/ClientProducts').then(m => ({ default: m.ClientProducts })));
 const AdminDashboard = React.lazy(() => import('./views/AdminDashboard').then(m => ({ default: m.AdminDashboard })));
 const BarberDashboard = React.lazy(() => import('./views/BarberDashboard').then(m => ({ default: m.BarberDashboard })));
+const CashierDashboard = React.lazy(() => import('./views/CashierDashboard').then(m => ({ default: m.CashierDashboard })));
 
 // Helper to adjust color brightness for light/dark variants
 const adjustColor = (color: string, amount: number) => {
@@ -77,7 +78,7 @@ const LoginView: React.FC<LoginViewProps> = ({
           </div>
       </div>
       <h2 className="text-2xl font-bold text-center text-white mb-6">
-          Acesso {targetRole === 'ADMIN' ? 'Administrativo' : 'Barbeiro'}
+          Acesso {targetRole === 'ADMIN' ? 'Administrativo' : targetRole === 'CAIXA' ? 'Caixa' : 'Barbeiro'}
       </h2>
       
       {error && (
@@ -118,7 +119,9 @@ const LoginView: React.FC<LoginViewProps> = ({
 );
 
 const AppContent = () => {
-  const [view, setView] = useState('client-home');
+  const [view, setView] = useState(() => {
+    try { return localStorage.getItem('barberpro_view') || 'client-home'; } catch { return 'client-home'; }
+  });
   
   // Login UI State
   const [loginEmail, setLoginEmail] = useState('');
@@ -161,6 +164,7 @@ const AppContent = () => {
 
   const navigate = useCallback((newView: string) => {
     setView(newView);
+    try { localStorage.setItem('barberpro_view', newView); } catch {}
     window.scrollTo(0, 0);
   }, []);
 
@@ -168,6 +172,7 @@ const AppContent = () => {
   useEffect(() => {
       if (userRole === 'ADMIN') navigate('admin-dashboard');
       else if (userRole === 'BARBER') navigate('barber-dashboard');
+      else if (userRole === 'CAIXA') navigate('cashier-dashboard');
   }, [userRole, navigate]);
 
   const handleLogin = async (targetRole: UserRole) => {
@@ -186,6 +191,7 @@ const AppContent = () => {
     setLoginEmail('');
     setLoginPassword('');
     setLoginError('');
+    try { localStorage.removeItem('barberpro_view'); } catch {}
     navigate('client-home');
   };
 
@@ -218,6 +224,16 @@ const AppContent = () => {
             error={loginError}
             onLogin={handleLogin}
         />;
+      case 'login-caixa': 
+        return <LoginView 
+            targetRole="CAIXA" 
+            username={loginEmail}
+            setUsername={setLoginEmail}
+            password={loginPassword}
+            setPassword={setLoginPassword}
+            error={loginError}
+            onLogin={handleLogin}
+        />;
       
       case 'admin-dashboard': 
         if (userRole === 'ADMIN') return <AdminDashboard />;
@@ -227,6 +243,10 @@ const AppContent = () => {
         // Pass currentUserId to ensure dashboard shows correct data
         if (userRole === 'BARBER') return <BarberDashboard currentBarberId={currentUserId} />;
         return <LoginView targetRole="BARBER" username={loginEmail} setUsername={setLoginEmail} password={loginPassword} setPassword={setLoginPassword} error={loginError} onLogin={handleLogin} />;
+      
+      case 'cashier-dashboard': 
+        if (userRole === 'CAIXA') return <CashierDashboard />;
+        return <LoginView targetRole="CAIXA" username={loginEmail} setUsername={setLoginEmail} password={loginPassword} setPassword={setLoginPassword} error={loginError} onLogin={handleLogin} />;
       
       default: return <ClientHome navigate={navigate} />;
     }

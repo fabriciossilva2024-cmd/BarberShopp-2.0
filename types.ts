@@ -1,4 +1,4 @@
-export type UserRole = 'CLIENT' | 'BARBER' | 'ADMIN';
+export type UserRole = 'CLIENT' | 'BARBER' | 'ADMIN' | 'CAIXA';
 
 export type PaymentMethod = 'PIX' | 'CASH' | 'TRANSFER';
 
@@ -24,6 +24,7 @@ export interface Product {
 export interface Barber {
   id: string;
   name: string;
+  role?: 'BARBER' | 'CAIXA';
   specialties: string[];
   avatar: string;
   rating: number;
@@ -37,23 +38,35 @@ export interface Barber {
   shiftEnd?: string;   // Format "HH:mm"
   breakStart?: string; // Format "HH:mm"
   breakEnd?: string;   // Format "HH:mm"
+  isOnBreak?: boolean;
 }
 
 export type AppointmentStatus = 'PENDING' | 'CONFIRMED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW';
 
 export interface Appointment {
   id: string;
-  clientName: string; // Simplified for demo, usually would be a User ID
+  clientName: string;
+  clientId?: string;
   serviceId: string;
   barberId: string;
   date: string; // ISO String
   status: AppointmentStatus;
   notes?: string;
   totalPrice: number;
-  productIds?: string[]; // New field: Products included in the appointment
-  commissionPaid?: boolean; // New field to track payout status
-  commissionPaymentMethod?: PaymentMethod; // Track how it was paid
-  clientArrived?: boolean; // Track if client is physically present
+  productIds?: string[];
+  commissionPaid?: boolean;
+  commissionPaymentMethod?: PaymentMethod;
+  clientArrived?: boolean;
+}
+
+export interface Client {
+  id: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  whatsapp?: string;
+  notes?: string;
+  createdAt?: string;
 }
 
 export interface Expense {
@@ -92,4 +105,6 @@ export interface AppConfig {
   primaryColor?: string; // Hex code for main branding color
   adminPassword?: string;
   adminUsername?: string; // Added admin username field
+  caixaUsername?: string;
+  caixaPassword?: string;
 }

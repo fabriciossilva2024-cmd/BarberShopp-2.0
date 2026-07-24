@@ -1,14 +1,15 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useAppStore } from '../store';
 import { supabase } from '../supabaseClient';
+import { formatPhone } from '../utils';
 import { 
   LayoutDashboard, Calendar, Users, Scissors, ShoppingBag, 
   DollarSign, Settings, Plus, Trash2, Edit, X, Save, 
   CheckCircle, AlertCircle, TrendingUp, Wallet, Star, Briefcase, 
   Clock, Coffee, ChevronRight, Search, Check, Filter, Megaphone,
-  Menu, ChevronDown, ChevronUp, ArrowUpRight, ArrowDownLeft, PieChart, Banknote, ImageIcon, Upload, Loader, Lock, MapPin, Phone, Globe, Package, ToggleLeft, ToggleRight, User, ShieldCheck, CalendarDays, Database, Wifi
+  Menu, ChevronDown, ChevronUp, ArrowUpRight, ArrowDownLeft, PieChart, Banknote, ImageIcon, Upload, Loader, Lock, MapPin, Phone, Globe, Package, ToggleLeft, ToggleRight, User, ShieldCheck, CalendarDays, Database, Wifi, UserPlus
 } from 'lucide-react';
-import { Barber, Service, Product, AppointmentStatus, PaymentMethod } from '../types';
+import { Barber, Service, Product, AppointmentStatus, PaymentMethod, Client } from '../types';
 
 const DAYS_OF_WEEK = [
     { id: 0, label: 'Dom', full: 'Domingo' },
@@ -132,70 +133,69 @@ const CaixaView: React.FC<CaixaViewProps> = ({ services, barbers, appointments, 
         setShowAddTransaction(false);
     };
 
-    if (!caixaOpen) {
-        return (
-            <div className="animate-fade-in space-y-6">
-                <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                    <Wallet size={24} className="text-gold-500" /> Painel Caixa
-                </h2>
-                
-                <div className="max-w-md mx-auto">
-                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center">
-                        <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-6 border-2 border-gold-500/30">
-                            <Wallet size={36} className="text-gold-500" />
-                        </div>
-                        <h3 className="text-xl font-bold text-white mb-2">Caixa Fechado</h3>
-                        <p className="text-slate-400 text-sm mb-6">Abra o caixa para iniciar as operações do dia.</p>
-                        
-                        <div className="space-y-4">
-                            <div>
-                                <label className="text-xs uppercase font-bold text-slate-500 mb-1 block">Valor de Abertura (R$)</label>
-                                <input 
-                                    type="number" 
-                                    step="0.01"
-                                    min="0"
-                                    value={openingAmount}
-                                    onChange={(e) => setOpeningAmount(e.target.value)}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white text-center text-xl font-bold focus:outline-none focus:border-gold-500"
-                                    placeholder="0,00"
-                                />
-                            </div>
-                            <button 
-                                onClick={handleOpenCaixa}
-                                className="w-full bg-gold-500 hover:bg-gold-400 text-slate-900 font-bold py-3 rounded-lg transition-colors text-lg"
-                            >
-                                Abrir Caixa
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
     return (
         <div className="animate-fade-in space-y-6">
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                 <h2 className="text-2xl font-bold text-white flex items-center gap-2">
                     <Wallet size={24} className="text-gold-500" /> Painel Caixa
-                    <span className="text-xs px-3 py-1 bg-green-500/10 text-green-500 rounded-full border border-green-500/20 ml-2">
-                        ABERTO
-                    </span>
+                    {caixaOpen ? (
+                        <span className="text-xs px-3 py-1 bg-green-500/10 text-green-500 rounded-full border border-green-500/20 ml-2">
+                            ABERTO
+                        </span>
+                    ) : (
+                        <span className="text-xs px-3 py-1 bg-red-500/10 text-red-500 rounded-full border border-red-500/20 ml-2">
+                            FECHADO
+                        </span>
+                    )}
                 </h2>
-                <button 
-                    onClick={handleCloseCaixa}
-                    disabled={isClosing}
-                    className={`px-6 py-2 rounded-lg font-bold flex items-center gap-2 transition-colors ${
-                        confirmClose 
-                            ? 'bg-red-600 hover:bg-red-500 text-white animate-pulse' 
-                            : 'bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20'
-                    }`}
-                >
-                    {isClosing ? <Loader size={16} className="animate-spin" /> : <Lock size={16} />}
-                    {confirmClose ? 'Confirmar Fechamento' : 'Fechar Caixa'}
-                </button>
+                {caixaOpen && (
+                    <button 
+                        onClick={handleCloseCaixa}
+                        disabled={isClosing}
+                        className={`px-6 py-2 rounded-lg font-bold flex items-center gap-2 transition-colors ${
+                            confirmClose 
+                                ? 'bg-red-600 hover:bg-red-500 text-white animate-pulse' 
+                                : 'bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20'
+                        }`}
+                    >
+                        {isClosing ? <Loader size={16} className="animate-spin" /> : <Lock size={16} />}
+                        {confirmClose ? 'Confirmar Fechamento' : 'Fechar Caixa'}
+                    </button>
+                )}
             </div>
 
+            {/* Caixa Fechado - Inline Banner */}
+            {!caixaOpen && (
+                <div className="bg-slate-900 border border-gold-500/30 rounded-2xl p-6 flex flex-col md:flex-row items-center gap-6">
+                    <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center border-2 border-gold-500/30 flex-shrink-0">
+                        <Wallet size={28} className="text-gold-500" />
+                    </div>
+                    <div className="flex-1 text-center md:text-left">
+                        <h3 className="text-lg font-bold text-white mb-1">Caixa Fechado</h3>
+                        <p className="text-slate-400 text-sm">Informe o valor de abertura para iniciar as operações do dia.</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <input 
+                            type="number" 
+                            step="0.01"
+                            min="0"
+                            value={openingAmount}
+                            onChange={(e) => setOpeningAmount(e.target.value)}
+                            className="w-36 bg-slate-800 border border-slate-700 rounded-lg p-3 text-white text-center font-bold focus:outline-none focus:border-gold-500"
+                            placeholder="R$ 0,00"
+                        />
+                        <button 
+                            onClick={handleOpenCaixa}
+                            className="bg-gold-500 hover:bg-gold-400 text-slate-900 font-bold px-6 py-3 rounded-lg transition-colors whitespace-nowrap"
+                        >
+                            Abrir Caixa
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {caixaOpen && (
+            <>
             {/* Saldo Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
@@ -393,19 +393,23 @@ const CaixaView: React.FC<CaixaViewProps> = ({ services, barbers, appointments, 
                     </div>
                 </div>
             </div>
+            </>
+            )}
         </div>
     );
 };
 
 export const AdminDashboard = () => {
   const { 
-    config, services, barbers, products, appointments, expenses, revenues, announcements,
+    config, services, barbers, products, appointments, expenses, revenues, announcements, clients,
     updateConfig, addBarber, updateBarber, deleteBarber,
     addService, updateService, deleteService,
     addProduct, updateProduct, deleteProduct,
     addExpense, deleteExpense,
     addRevenue, deleteRevenue,
     addAnnouncement, deleteAnnouncement, toggleAnnouncement,
+    addClient, updateClient,
+    updateAppointment, deleteAppointment,
     payCommission, seedDatabase, refreshData, testConnection
   } = useAppStore();
 
@@ -438,6 +442,18 @@ export const AdminDashboard = () => {
   const [isAnnouncementModalOpen, setIsAnnouncementModalOpen] = useState(false);
   const [newAnnouncementData, setNewAnnouncementData] = useState({ title: '', message: '' });
 
+  // -- Client States --
+  const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [editingClient, setEditingClient] = useState<Partial<Client> | null>(null);
+  const [clientSearchTerm, setClientSearchTerm] = useState('');
+  const [isClientSecurityOpen, setIsClientSecurityOpen] = useState(false);
+  const [clientSecurityPassword, setClientSecurityPassword] = useState('');
+  const [clientSuccessMsg, setClientSuccessMsg] = useState('');
+
+  // -- Appointment Edit States --
+  const [isAptModalOpen, setIsAptModalOpen] = useState(false);
+  const [editingApt, setEditingApt] = useState<any>(null);
+
   // -- Finance States --
   const [isRevenueModalOpen, setIsRevenueModalOpen] = useState(false);
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
@@ -446,14 +462,18 @@ export const AdminDashboard = () => {
   // -- Settings State --
   const [settingsForm, setSettingsForm] = useState(config);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const settingsLoadedRef = useRef(false);
   
   // -- Security Modal State --
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
   const [securityPassword, setSecurityPassword] = useState('');
 
-  // Sync settings form when config changes (e.g. after load)
+  // Sync settings form ONLY on first load (not on polling updates)
   useEffect(() => {
-    setSettingsForm(config);
+    if (!settingsLoadedRef.current && config.name) {
+      setSettingsForm(config);
+      settingsLoadedRef.current = true;
+    }
   }, [config]);
 
   // -- Derived Data (Overview) --
@@ -514,6 +534,31 @@ export const AdminDashboard = () => {
   
   const financeGrandTotal = financeServiceTotal + financeRevenueTotal;
   const financeNetBalance = financeGrandTotal - financeExpenseTotal;
+
+  // -- Unified Finance Transactions (same logic as CashierDashboard) --
+  const financeAllTransactions = useMemo(() => [
+      ...filteredFinanceAppointments.map(a => ({
+          id: a.id,
+          type: 'INCOME' as const,
+          description: `Serviço - ${services.find(s => s.id === a.serviceId)?.name || 'Serviço'}`,
+          amount: a.totalPrice || 0,
+          category: 'SERVICE',
+          date: a.date,
+          client: a.clientName,
+          source: 'appointment' as const
+      })),
+      ...filteredFinanceRevenues.map(r => ({
+          id: r.id,
+          type: 'INCOME' as const,
+          description: r.description,
+          amount: r.amount,
+          category: r.category,
+          date: r.date,
+          client: '',
+          source: 'revenue' as const
+      }))
+  ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+  [filteredFinanceAppointments, filteredFinanceRevenues, services]);
 
 
   // -- Pending Commissions Logic --
@@ -786,6 +831,7 @@ export const AdminDashboard = () => {
       
       const barberPayload = {
           name: editingBarber.name,
+          role: editingBarber.role || 'BARBER',
           specialties: editingBarber.specialties || [],
           avatar: editingBarber.avatar || 'https://cdn-icons-png.flaticon.com/512/3655/3655583.png',
           // Ensure valid numbers, default to safe values
@@ -829,6 +875,44 @@ export const AdminDashboard = () => {
       setNewAnnouncementData({ title: '', message: '' });
   };
 
+  const handleSaveClient = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!editingClient || !editingClient.name?.trim()) return;
+      setIsClientModalOpen(false);
+      setIsClientSecurityOpen(true);
+  };
+
+  const handleConfirmSaveClient = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setIsClientSecurityOpen(false);
+      try {
+          if (editingClient?.id) {
+              await updateClient(editingClient.id, {
+                  name: editingClient.name,
+                  phone: editingClient.phone || '',
+                  email: editingClient.email || '',
+                  whatsapp: editingClient.whatsapp || '',
+                  notes: editingClient.notes || ''
+              });
+              setClientSuccessMsg('Cliente atualizado com sucesso!');
+          } else {
+              await addClient({
+                  name: editingClient!.name,
+                  phone: editingClient!.phone || '',
+                  email: editingClient!.email || '',
+                  whatsapp: editingClient!.whatsapp || '',
+                  notes: editingClient!.notes || ''
+              });
+              setClientSuccessMsg('Cliente cadastrado com sucesso!');
+          }
+          setEditingClient(null);
+          setTimeout(() => setClientSuccessMsg(''), 3000);
+      } catch (err) {
+          console.error('Erro ao salvar cliente:', err);
+          alert('Erro ao salvar cliente no banco de dados. Tente novamente.');
+      }
+  };
+
   const handleAddTransaction = async (type: 'REVENUE' | 'EXPENSE') => {
       if (!newTransaction.description || !newTransaction.amount) return;
 
@@ -852,19 +936,16 @@ export const AdminDashboard = () => {
       setNewTransaction({ description: '', amount: '', category: '' });
   };
 
-  const handleConfirmSaveSettings = async (e: React.FormEvent) => {
-      e.preventDefault();
-      
-      // Verify Password
-      if (securityPassword !== config.adminPassword) {
-          alert("Senha incorreta! As alterações não foram salvas.");
-          return;
-      }
+  const handleConfirmSaveSettings = async (e?: React.FormEvent | React.MouseEvent) => {
+      if (e && 'preventDefault' in e) e.preventDefault();
 
-      await updateConfig(settingsForm);
+      const error = await updateConfig(settingsForm);
       setIsSecurityModalOpen(false);
-      setSecurityPassword('');
-      alert('Configurações salvas com sucesso!');
+      if (error) {
+          alert(`Erro ao salvar: ${error}`);
+      } else {
+          alert('Configurações salvas com sucesso!');
+      }
   };
 
   const toggleDay = (dayId: number) => {
@@ -915,8 +996,9 @@ export const AdminDashboard = () => {
                <TabButton id="APPOINTMENTS" icon={Calendar} label="Agenda" />
                <TabButton id="BARBERS" icon={Users} label="Profissionais" />
                <TabButton id="SERVICES" icon={Scissors} label="Serviços" />
-               <TabButton id="PRODUCTS" icon={ShoppingBag} label="Produtos" />
-                <TabButton id="FINANCE" icon={DollarSign} label="Financeiro" />
+                <TabButton id="PRODUCTS" icon={ShoppingBag} label="Produtos" />
+                <TabButton id="CLIENTS" icon={UserPlus} label="Clientes" />
+                 <TabButton id="FINANCE" icon={DollarSign} label="Financeiro" />
                 <TabButton id="CAIXA" icon={Wallet} label="Caixa" />
                 <TabButton id="ANNOUNCEMENTS" icon={Megaphone} label="Avisos" />
                <TabButton id="SETTINGS" icon={Settings} label="Configurações" />
@@ -1044,12 +1126,29 @@ export const AdminDashboard = () => {
                            const isToday = new Date().toDateString() === dateObj.toDateString();
 
                            return (
-                               <div key={apt.id} className="bg-slate-900 border border-slate-800 rounded-xl p-4 md:p-5 hover:border-slate-700 transition-colors flex flex-col md:flex-row gap-4 md:gap-6 relative overflow-hidden group">
-                                   <div className={`absolute left-0 top-0 bottom-0 w-1 md:w-1.5 ${
-                                       apt.status === 'COMPLETED' ? 'bg-green-500' : 
-                                       apt.status === 'IN_PROGRESS' ? 'bg-blue-500 animate-pulse' : 
-                                       apt.status === 'CANCELLED' ? 'bg-red-500' : 'bg-gold-500'
-                                   }`}></div>
+                                <div key={apt.id} className="bg-slate-900 border border-slate-800 rounded-xl p-4 md:p-5 hover:border-slate-700 transition-colors flex flex-col md:flex-row gap-4 md:gap-6 relative overflow-hidden group">
+                                    <div className={`absolute left-0 top-0 bottom-0 w-1 md:w-1.5 ${
+                                        apt.status === 'COMPLETED' ? 'bg-green-500' : 
+                                        apt.status === 'IN_PROGRESS' ? 'bg-blue-500 animate-pulse' : 
+                                        apt.status === 'CANCELLED' ? 'bg-red-500' : 'bg-gold-500'
+                                    }`}></div>
+
+                                    <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button
+                                            onClick={() => { setEditingApt({ ...apt, date: apt.date.slice(0, 16) }); setIsAptModalOpen(true); }}
+                                            className="p-1.5 bg-slate-800 hover:bg-gold-500/20 border border-slate-700 hover:border-gold-500/30 rounded-lg text-slate-400 hover:text-gold-500 transition-all"
+                                            title="Editar Agendamento"
+                                        >
+                                            <Edit size={14} />
+                                        </button>
+                                        <button
+                                            onClick={() => { if(window.confirm('Tem certeza que deseja excluir este agendamento?')) deleteAppointment(apt.id); }}
+                                            className="p-1.5 bg-slate-800 hover:bg-red-500/20 border border-slate-700 hover:border-red-500/30 rounded-lg text-slate-400 hover:text-red-500 transition-all"
+                                            title="Excluir Agendamento"
+                                        >
+                                            <X size={14} />
+                                        </button>
+                                    </div>
 
                                    <div className="flex flex-row md:flex-col items-center md:items-center justify-between md:justify-start gap-3 md:gap-1 pl-3 md:pl-4">
                                        <div className="flex items-center gap-3 md:flex-col md:gap-1">
@@ -1143,25 +1242,40 @@ export const AdminDashboard = () => {
               <div className="flex justify-between items-center mb-6">
                   <h2 className="text-2xl font-bold text-white">Profissionais</h2>
                   <button 
-                    onClick={() => { setEditingBarber({}); setIsBarberModalOpen(true); }}
+                    onClick={() => { setEditingBarber({ role: 'BARBER' }); setIsBarberModalOpen(true); }}
                     className="bg-gold-500 hover:bg-gold-400 text-slate-900 px-4 py-2 rounded-lg font-bold flex items-center gap-2"
                   >
-                      <Plus size={18} /> Novo Barbeiro
+                      <Plus size={18} /> Novo Profissional
                   </button>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {barbers.map(barber => (
                       <div key={barber.id} className="bg-slate-900 border border-slate-800 rounded-xl p-5 group hover:border-slate-600 transition-all">
                           <div className="flex items-start gap-4 mb-4">
-                              <img src={barber.avatar} alt={barber.name} className="w-16 h-16 rounded-full object-cover border-2 border-slate-700" />
+                              <div className="relative">
+                                  <img src={barber.avatar} alt={barber.name} className={`w-16 h-16 rounded-full object-cover border-2 ${barber.isOnBreak ? 'border-yellow-500 opacity-60' : 'border-slate-700'}`} />
+                                  <div className={`absolute bottom-0 right-0 w-4 h-4 border-2 border-slate-900 rounded-full ${barber.isOnBreak ? 'bg-yellow-500' : 'bg-green-500'}`}></div>
+                              </div>
                               <div>
                                   <h3 className="font-bold text-white">{barber.name}</h3>
+                                  <div className="flex items-center gap-2 mt-1">
+                                      <span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold uppercase ${barber.role === 'CAIXA' ? 'bg-blue-500/10 text-blue-500 border-blue-500/20' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
+                                          {barber.role === 'CAIXA' ? 'Operador Caixa' : 'Barbeiro'}
+                                      </span>
+                                  </div>
                                   <div className="text-xs text-slate-400 mt-1">
                                       {barber.specialties.slice(0, 2).join(', ')}
                                       {barber.specialties.length > 2 && '...'}
                                   </div>
-                                  <div className="flex items-center gap-1 mt-2 text-gold-500 text-xs font-bold">
-                                      <Star size={12} fill="currentColor" /> {barber.rating}
+                                  <div className="flex items-center gap-2 mt-2">
+                                      <span className="flex items-center gap-1 text-gold-500 text-xs font-bold">
+                                          <Star size={12} fill="currentColor" /> {barber.rating}
+                                      </span>
+                                      {barber.isOnBreak && (
+                                          <span className="flex items-center gap-1 text-yellow-500 text-[10px] font-bold bg-yellow-500/10 px-2 py-0.5 rounded-full border border-yellow-500/20">
+                                              <Coffee size={10} /> Em Intervalo
+                                          </span>
+                                      )}
                                   </div>
                               </div>
                           </div>
@@ -1324,16 +1438,7 @@ export const AdminDashboard = () => {
                       <div className="relative z-10">
                           <p className="text-slate-400 text-xs font-bold uppercase mb-1">Entradas Totais</p>
                           <h3 className="text-2xl font-bold text-green-500">R$ {financeGrandTotal.toFixed(2)}</h3>
-                          <div className="flex flex-col gap-1 text-[10px] text-slate-500 mt-2">
-                             <div className="flex justify-between items-center border-b border-slate-800 pb-1">
-                                <span>Serviços Atendidos:</span>
-                                <span className="text-green-500 font-bold">R$ {financeServiceTotal.toFixed(2)}</span>
-                             </div>
-                             <div className="flex justify-between items-center pt-1">
-                                <span>Produtos & Extras:</span>
-                                <span className="text-blue-500 font-bold">R$ {financeRevenueTotal.toFixed(2)}</span>
-                             </div>
-                          </div>
+                          <p className="text-[10px] text-slate-500 mt-2">{financeAllTransactions.length} transações no período.</p>
                       </div>
                   </div>
 
@@ -1411,7 +1516,7 @@ export const AdminDashboard = () => {
                   <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col h-full">
                       <div className="flex justify-between items-center mb-4">
                           <h4 className="font-bold text-white flex items-center gap-2">
-                              <ArrowUpRight size={18} className="text-green-500" /> Receitas Extras
+                              <ArrowUpRight size={18} className="text-green-500" /> Todas as Entradas
                           </h4>
                           <button 
                             onClick={() => setIsRevenueModalOpen(true)}
@@ -1421,22 +1526,30 @@ export const AdminDashboard = () => {
                           </button>
                       </div>
                       <div className="overflow-y-auto max-h-[300px] custom-scrollbar space-y-2">
-                           {filteredFinanceRevenues.length === 0 ? (
-                               <p className="text-center text-slate-500 text-sm py-4">Nenhuma receita extra encontrada no período.</p>
+                           {financeAllTransactions.length === 0 ? (
+                               <p className="text-center text-slate-500 text-sm py-4">Nenhuma entrada encontrada no período.</p>
                            ) : (
-                               filteredFinanceRevenues.map(rev => (
-                                   <div key={rev.id} className="bg-slate-800/50 p-3 rounded-lg flex justify-between items-center group hover:bg-slate-800 transition-colors">
-                                       <div>
-                                           <div className="text-sm font-bold text-white">{rev.description}</div>
-                                           <div className="text-[10px] text-slate-500">
-                                               {new Date(rev.date).toLocaleDateString()} • {rev.category}
+                               financeAllTransactions.map(tx => (
+                                   <div key={tx.id} className="bg-slate-800/50 p-3 rounded-lg flex justify-between items-center group hover:bg-slate-800 transition-colors">
+                                       <div className="flex items-center gap-3">
+                                           <div className={`w-8 h-8 rounded-full flex items-center justify-center bg-green-500/10`}>
+                                               <ArrowUpRight size={14} className="text-green-500" />
+                                           </div>
+                                           <div>
+                                               <div className="text-sm font-bold text-white">{tx.description}</div>
+                                               <div className="text-[10px] text-slate-500">
+                                                   {tx.category} • {new Date(tx.date).toLocaleDateString()} {new Date(tx.date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                                   {tx.client && ` • ${tx.client}`}
+                                               </div>
                                            </div>
                                        </div>
                                        <div className="flex items-center gap-3">
-                                           <span className="text-green-500 font-bold text-sm">+ R$ {rev.amount.toFixed(2)}</span>
-                                           <button onClick={() => deleteRevenue(rev.id)} className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all">
-                                               <Trash2 size={14} />
-                                           </button>
+                                           <span className="text-green-500 font-bold text-sm">+ R$ {tx.amount.toFixed(2)}</span>
+                                           {tx.source === 'revenue' && (
+                                               <button onClick={() => deleteRevenue(tx.id)} className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all">
+                                                   <Trash2 size={14} />
+                                               </button>
+                                           )}
                                        </div>
                                    </div>
                                ))
@@ -1561,6 +1674,93 @@ export const AdminDashboard = () => {
            </div>
         )}
 
+        {/* VIEW: CLIENTS */}
+        {activeTab === 'CLIENTS' && (
+           <div className="animate-fade-in space-y-6">
+               {clientSuccessMsg && (
+                   <div className="bg-green-500/10 border border-green-500/30 text-green-500 px-4 py-3 rounded-xl flex items-center gap-2 font-medium animate-fade-in">
+                       <CheckCircle size={20} /> {clientSuccessMsg}
+                   </div>
+               )}
+               <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                   <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                       <UserPlus size={24} className="text-gold-500" /> Clientes Cadastrados
+                   </h2>
+                   <button 
+                       onClick={() => { setEditingClient({ name: '', phone: '', email: '', whatsapp: '', notes: '' }); setIsClientModalOpen(true); }}
+                       className="bg-gold-500 hover:bg-gold-400 text-slate-900 px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-lg shadow-gold-900/20"
+                   >
+                       <Plus size={18} /> Novo Cliente
+                   </button>
+               </div>
+
+               {/* Search */}
+               <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+                   <div className="relative">
+                       <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                       <input 
+                           type="text" 
+                           value={clientSearchTerm}
+                           onChange={(e) => setClientSearchTerm(e.target.value)}
+                           placeholder="Buscar por nome, telefone ou email..."
+                           className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 pl-10 text-white text-sm focus:outline-none focus:border-gold-500"
+                       />
+                   </div>
+               </div>
+
+               {/* Clients List */}
+               <div className="grid gap-3">
+                   {clients.filter(c => {
+                       if (!clientSearchTerm) return true;
+                       const term = clientSearchTerm.toLowerCase();
+                       return (c.name?.toLowerCase().includes(term) || c.phone?.toLowerCase().includes(term) || c.email?.toLowerCase().includes(term));
+                   }).length === 0 ? (
+                       <div className="text-center py-16 bg-slate-900/50 rounded-xl border border-slate-800 border-dashed">
+                           <UserPlus size={48} className="mx-auto text-slate-600 mb-4 opacity-50" />
+                           <p className="text-slate-500">
+                               {clients.length === 0 ? 'Nenhum cliente cadastrado ainda.' : 'Nenhum cliente encontrado para esta busca.'}
+                           </p>
+                       </div>
+                   ) : (
+                       clients.filter(c => {
+                           if (!clientSearchTerm) return true;
+                           const term = clientSearchTerm.toLowerCase();
+                           return (c.name?.toLowerCase().includes(term) || c.phone?.toLowerCase().includes(term) || c.email?.toLowerCase().includes(term));
+                       }).map(client => {
+                           const clientAppointments = appointments.filter(a => a.clientId === client.id);
+                           return (
+                               <div key={client.id} className="bg-slate-900 border border-slate-800 rounded-xl p-4 hover:border-slate-700 transition-colors flex flex-col md:flex-row md:items-center gap-4">
+                                   <div className="flex items-center gap-4 flex-1">
+                                       <div className="w-12 h-12 bg-slate-800 rounded-full flex items-center justify-center border border-slate-700 flex-shrink-0">
+                                           <span className="text-lg font-bold text-gold-500">{client.name?.charAt(0)?.toUpperCase()}</span>
+                                       </div>
+                                       <div className="flex-1 min-w-0">
+                                           <div className="font-bold text-white truncate">{client.name}</div>
+                                           <div className="text-xs text-slate-400 flex flex-wrap gap-2 mt-0.5">
+                                               {client.phone && <span className="flex items-center gap-1"><Phone size={10} /> {client.phone}</span>}
+                                               {client.email && <span className="flex items-center gap-1"><Globe size={10} /> {client.email}</span>}
+                                           </div>
+                                       </div>
+                                   </div>
+                                   <div className="flex items-center gap-3 md:w-auto">
+                                       <div className="text-xs text-slate-500 bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700 whitespace-nowrap">
+                                           {clientAppointments.length} agendamento{clientAppointments.length !== 1 ? 's' : ''}
+                                       </div>
+                                       <button 
+                                           onClick={() => { setEditingClient(client); setIsClientModalOpen(true); }}
+                                           className="p-2 bg-slate-800 hover:bg-gold-500/10 border border-slate-700 hover:border-gold-500/30 rounded-lg text-slate-400 hover:text-gold-500 transition-all"
+                                       >
+                                           <Edit size={16} />
+                                       </button>
+                                   </div>
+                               </div>
+                           );
+                       })
+                   )}
+               </div>
+           </div>
+        )}
+
         {/* VIEW: SETTINGS */}
         {activeTab === 'SETTINGS' && (
            <div className="max-w-4xl mx-auto animate-fade-in pb-12">
@@ -1573,9 +1773,9 @@ export const AdminDashboard = () => {
                        <button onClick={() => { if(window.confirm('Isso irá popular o banco de dados com dados de exemplo. Continuar?')) seedDatabase(); }} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm border border-slate-700 transition-colors">
                            Popular Banco
                        </button>
-                       <button onClick={() => setIsSecurityModalOpen(true)} className="px-6 py-2 bg-gold-500 hover:bg-gold-400 text-slate-900 font-bold rounded-lg shadow-lg shadow-gold-500/20 transition-colors flex items-center gap-2">
-                           <Save size={18} /> Salvar Tudo
-                       </button>
+                        <button onClick={handleConfirmSaveSettings} className="px-6 py-2 bg-gold-500 hover:bg-gold-400 text-slate-900 font-bold rounded-lg shadow-lg shadow-gold-500/20 transition-colors flex items-center gap-2">
+                            <Save size={18} /> Salvar Tudo
+                        </button>
                    </div>
                </div>
 
@@ -1665,16 +1865,17 @@ export const AdminDashboard = () => {
                                <input 
                                    type="text" 
                                    value={settingsForm.phone} 
-                                   onChange={(e) => setSettingsForm({...settingsForm, phone: e.target.value})}
+                                    onChange={(e) => setSettingsForm({...settingsForm, phone: formatPhone(e.target.value)})}
                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-gold-500" 
                                />
                            </div>
                            <div>
-                               <label className="block text-xs text-slate-500 font-bold uppercase mb-1">WhatsApp (Apenas Números)</label>
-                               <input 
-                                   type="text" 
-                                   value={settingsForm.whatsapp} 
-                                   onChange={(e) => setSettingsForm({...settingsForm, whatsapp: e.target.value})}
+                                <label className="block text-xs text-slate-500 font-bold uppercase mb-1">WhatsApp</label>
+                                <input 
+                                    type="text" 
+                                    placeholder="(00) 00000-0000"
+                                    value={settingsForm.whatsapp} 
+                                    onChange={(e) => setSettingsForm({...settingsForm, whatsapp: formatPhone(e.target.value)})}
                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-gold-500" 
                                />
                            </div>
@@ -2134,10 +2335,22 @@ export const AdminDashboard = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
              <div className="bg-slate-900 p-6 rounded-2xl w-full max-w-md border border-slate-800 max-h-[90vh] overflow-y-auto">
                 <h3 className="text-xl font-bold text-white mb-4">
-                    {editingBarber.id ? 'Editar Barbeiro' : 'Novo Barbeiro'}
+                    {editingBarber.id ? 'Editar Profissional' : 'Novo Profissional'}
                 </h3>
                 <form onSubmit={handleSaveBarber} className="space-y-4">
                     <input type="text" placeholder="Nome" className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white" value={editingBarber.name || ''} onChange={e => setEditingBarber({...editingBarber, name: e.target.value})} required />
+
+                    <div>
+                        <label className="block text-xs text-slate-500 font-bold uppercase mb-1">Tipo de Profissional</label>
+                        <div className="flex gap-2">
+                            <button type="button" onClick={() => setEditingBarber({...editingBarber, role: 'BARBER'})} className={`flex-1 py-3 rounded-lg font-bold text-sm transition-colors ${editingBarber.role !== 'CAIXA' ? 'bg-gold-500 text-slate-900' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>
+                                Barbeiro
+                            </button>
+                            <button type="button" onClick={() => setEditingBarber({...editingBarber, role: 'CAIXA'})} className={`flex-1 py-3 rounded-lg font-bold text-sm transition-colors ${editingBarber.role === 'CAIXA' ? 'bg-blue-500 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>
+                                Operador de Caixa
+                            </button>
+                        </div>
+                    </div>
                     
                     {/* Barber Image Upload */}
                     <div>
@@ -2184,10 +2397,12 @@ export const AdminDashboard = () => {
                         </div>
                     </div>
 
+                    {editingBarber.role !== 'CAIXA' && (
                     <div className="grid grid-cols-2 gap-4">
                         <input type="number" step="0.01" placeholder="Comissão (0.0-1.0)" className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white" value={editingBarber.commissionRate || ''} onChange={e => setEditingBarber({...editingBarber, commissionRate: Number(e.target.value)})} required />
                         <input type="number" placeholder="Anos Exp." className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white" value={editingBarber.experienceYears || ''} onChange={e => setEditingBarber({...editingBarber, experienceYears: Number(e.target.value)})} />
                     </div>
+                    )}
                     
                     <div className="bg-slate-800 p-3 rounded-lg border border-slate-700">
                         <h4 className="text-sm font-bold text-white mb-2">Acesso</h4>
@@ -2197,6 +2412,7 @@ export const AdminDashboard = () => {
                         </div>
                     </div>
 
+                    {editingBarber.role !== 'CAIXA' && (
                     <div className="bg-slate-800 p-3 rounded-lg border border-slate-700">
                         <h4 className="text-sm font-bold text-white mb-2">Horário</h4>
                         <div className="grid grid-cols-2 gap-2">
@@ -2204,6 +2420,7 @@ export const AdminDashboard = () => {
                              <input type="time" className="w-full bg-slate-900 p-2 rounded border border-slate-600 text-white text-sm" value={editingBarber.shiftEnd || ''} onChange={e => setEditingBarber({...editingBarber, shiftEnd: e.target.value})} />
                         </div>
                     </div>
+                    )}
 
                     <div className="flex gap-3 pt-2">
                         <button type="button" onClick={() => setIsBarberModalOpen(false)} className="flex-1 p-3 rounded-lg bg-slate-800 text-white">Cancelar</button>
@@ -2288,6 +2505,247 @@ export const AdminDashboard = () => {
                     </div>
                 </form>
              </div>
+        </div>
+      )}
+
+      {/* Client Modal */}
+      {isClientModalOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
+             <div className="bg-slate-900 p-6 rounded-2xl w-full max-w-md border border-slate-800 shadow-2xl animate-fade-in">
+                <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+                    <UserPlus size={20} className="text-gold-500" />
+                    {editingClient?.id ? 'Editar Cliente' : 'Novo Cliente'}
+                </h3>
+                <form onSubmit={handleSaveClient} className="space-y-4">
+                    <div>
+                        <label className="block text-xs text-slate-500 font-bold uppercase mb-1">Nome *</label>
+                        <input 
+                            type="text" 
+                            placeholder="Nome completo" 
+                            className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white focus:outline-none focus:border-gold-500" 
+                            value={editingClient?.name || ''} 
+                            onChange={e => setEditingClient(prev => ({ ...prev!, name: e.target.value }))}
+                            required 
+                        />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label className="block text-xs text-slate-500 font-bold uppercase mb-1">Telefone</label>
+                            <input 
+                                type="text" 
+                                placeholder="(00) 00000-0000" 
+                                className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white focus:outline-none focus:border-gold-500" 
+                                value={editingClient?.phone || ''} 
+                                onChange={e => setEditingClient(prev => ({ ...prev!, phone: formatPhone(e.target.value) }))}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs text-slate-500 font-bold uppercase mb-1">WhatsApp</label>
+                            <input 
+                                type="text" 
+                                placeholder="(00) 00000-0000" 
+                                className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white focus:outline-none focus:border-gold-500" 
+                                value={editingClient?.whatsapp || ''} 
+                                onChange={e => setEditingClient(prev => ({ ...prev!, whatsapp: formatPhone(e.target.value) }))}
+                            />
+                        </div>
+                    </div>
+                    <div>
+                        <label className="block text-xs text-slate-500 font-bold uppercase mb-1">Email</label>
+                        <input 
+                            type="email" 
+                            placeholder="email@exemplo.com" 
+                            className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white focus:outline-none focus:border-gold-500" 
+                            value={editingClient?.email || ''} 
+                            onChange={e => setEditingClient(prev => ({ ...prev!, email: e.target.value }))}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs text-slate-500 font-bold uppercase mb-1">Observações</label>
+                        <textarea 
+                            placeholder="Preferências, restrições, etc..." 
+                            className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white text-sm focus:outline-none focus:border-gold-500 min-h-[80px]" 
+                            value={editingClient?.notes || ''} 
+                            onChange={e => setEditingClient(prev => ({ ...prev!, notes: e.target.value }))}
+                        />
+                    </div>
+                    
+                    <div className="flex gap-3 pt-2">
+                        <button 
+                            type="button" 
+                            onClick={() => { setIsClientModalOpen(false); setEditingClient(null); }} 
+                            className="flex-1 p-3 rounded-lg bg-slate-800 text-white hover:bg-slate-700 transition-colors"
+                        >
+                            Cancelar
+                        </button>
+                        <button 
+                            type="submit" 
+                            className="flex-1 p-3 rounded-lg bg-gold-500 text-slate-900 font-bold hover:bg-gold-400 transition-colors"
+                        >
+                            Salvar
+                        </button>
+                    </div>
+                </form>
+             </div>
+        </div>
+      )}
+
+      {/* Client Security Confirmation Modal */}
+      {isClientSecurityOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
+             <div className="bg-slate-900 p-6 rounded-2xl w-full max-w-sm border border-slate-800 shadow-2xl animate-fade-in">
+                <div className="flex justify-center mb-4">
+                    <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center text-gold-500 border border-slate-700">
+                        <Lock size={32} />
+                    </div>
+                </div>
+                <h3 className="text-xl font-bold text-white mb-2 text-center">
+                   Confirmação de Segurança
+                </h3>
+                <p className="text-slate-400 text-sm text-center mb-6">
+                    Por favor, confirme sua senha administrativa para salvar o cliente.
+                </p>
+                <form onSubmit={handleConfirmSaveClient} className="space-y-4">
+                    <div>
+                        <label className="block text-xs text-slate-500 font-bold uppercase mb-1">Senha Atual</label>
+                        <input 
+                            type="password" 
+                            autoFocus
+                            placeholder="Digite sua senha..." 
+                            className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white focus:outline-none focus:border-gold-500" 
+                            value={clientSecurityPassword} 
+                            onChange={e => setClientSecurityPassword(e.target.value)} 
+                            required 
+                        />
+                    </div>
+                    
+                    <div className="flex gap-3 pt-2">
+                        <button 
+                            type="button" 
+                            onClick={() => { setIsClientSecurityOpen(false); setClientSecurityPassword(''); }} 
+                            className="flex-1 p-3 rounded-lg bg-slate-800 text-white hover:bg-slate-700 transition-colors"
+                        >
+                            Cancelar
+                        </button>
+                        <button 
+                            type="submit" 
+                            className="flex-1 p-3 rounded-lg bg-gold-500 text-slate-900 font-bold hover:bg-gold-400 transition-colors"
+                        >
+                            Confirmar
+                        </button>
+                    </div>
+                </form>
+             </div>
+        </div>
+      )}
+
+      {/* Appointment Edit Modal */}
+      {isAptModalOpen && editingApt && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
+          <div className="bg-slate-900 p-6 rounded-2xl w-full max-w-md border border-slate-800 shadow-2xl animate-fade-in">
+            <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+              <Calendar size={20} className="text-gold-500" /> Editar Agendamento
+            </h3>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              await updateAppointment(editingApt.id, {
+                clientName: editingApt.clientName,
+                serviceId: editingApt.serviceId,
+                barberId: editingApt.barberId,
+                date: new Date(editingApt.date).toISOString(),
+                status: editingApt.status,
+                totalPrice: Number(editingApt.totalPrice),
+                notes: editingApt.notes || ''
+              });
+              setIsAptModalOpen(false);
+              setEditingApt(null);
+            }} className="space-y-4">
+              <div>
+                <label className="block text-xs text-slate-500 font-bold uppercase mb-1">Cliente</label>
+                <input
+                    type="text"
+                    value={editingApt.clientName || ''}
+                    onChange={e => setEditingApt((prev: any) => ({ ...prev, clientName: e.target.value }))}
+                    className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white focus:outline-none focus:border-gold-500"
+                    required
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                    <label className="block text-xs text-slate-500 font-bold uppercase mb-1">Servico</label>
+                    <select
+                        value={editingApt.serviceId || ''}
+                        onChange={e => {
+                            const svc = services.find(s => s.id === e.target.value);
+                            setEditingApt((prev: any) => ({ ...prev, serviceId: e.target.value, totalPrice: svc?.price || prev.totalPrice }));
+                        }}
+                        className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white text-sm focus:outline-none focus:border-gold-500"
+                    >
+                        {services.map(s => <option key={s.id} value={s.id}>{s.name} - R$ {s.price.toFixed(2)}</option>)}
+                    </select>
+                </div>
+                <div>
+                    <label className="block text-xs text-slate-500 font-bold uppercase mb-1">Profissional</label>
+                    <select
+                        value={editingApt.barberId || ''}
+                        onChange={e => setEditingApt((prev: any) => ({ ...prev, barberId: e.target.value }))}
+                        className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white text-sm focus:outline-none focus:border-gold-500"
+                    >
+                        {barbers.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                    </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                    <label className="block text-xs text-slate-500 font-bold uppercase mb-1">Data e Hora</label>
+                    <input
+                        type="datetime-local"
+                        value={editingApt.date?.slice(0, 16) || ''}
+                        onChange={e => setEditingApt((prev: any) => ({ ...prev, date: e.target.value }))}
+                        className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white text-sm focus:outline-none focus:border-gold-500"
+                    />
+                </div>
+                <div>
+                    <label className="block text-xs text-slate-500 font-bold uppercase mb-1">Valor (R$)</label>
+                    <input
+                        type="number"
+                        step="0.01"
+                        value={editingApt.totalPrice || ''}
+                        onChange={e => setEditingApt((prev: any) => ({ ...prev, totalPrice: e.target.value }))}
+                        className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white text-sm focus:outline-none focus:border-gold-500"
+                    />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 font-bold uppercase mb-1">Status</label>
+                <select
+                    value={editingApt.status || 'PENDING'}
+                    onChange={e => setEditingApt((prev: any) => ({ ...prev, status: e.target.value }))}
+                    className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white text-sm focus:outline-none focus:border-gold-500"
+                >
+                    <option value="PENDING">Agendado</option>
+                    <option value="CONFIRMED">Confirmado</option>
+                    <option value="IN_PROGRESS">Em Andamento</option>
+                    <option value="COMPLETED">Finalizado</option>
+                    <option value="CANCELLED">Cancelado</option>
+                    <option value="NO_SHOW">Nao Compareceu</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 font-bold uppercase mb-1">Observacoes</label>
+                <textarea
+                    value={editingApt.notes || ''}
+                    onChange={e => setEditingApt((prev: any) => ({ ...prev, notes: e.target.value }))}
+                    placeholder="Notas sobre o agendamento..."
+                    className="w-full bg-slate-800 p-3 rounded-lg border border-slate-700 text-white text-sm focus:outline-none focus:border-gold-500 min-h-[60px]"
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => { setIsAptModalOpen(false); setEditingApt(null); }} className="flex-1 p-3 rounded-lg bg-slate-800 text-white hover:bg-slate-700 transition-colors">Cancelar</button>
+                <button type="submit" className="flex-1 p-3 rounded-lg bg-gold-500 text-slate-900 font-bold hover:bg-gold-400 transition-colors">Salvar</button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

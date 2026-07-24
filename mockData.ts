@@ -10,8 +10,10 @@ export const INITIAL_CONFIG: AppConfig = {
   openDays: [1, 2, 3, 4, 5, 6], // Monday to Saturday
   logo: "", // Empty string will use default icon
   primaryColor: "#f59e0b", // Default Gold
-  adminPassword: "admin",
-  adminUsername: "admin"
+  adminPassword: "123",
+  adminUsername: "fabricio",
+  caixaUsername: "caixa",
+  caixaPassword: "caixa"
 };
 
 export const INITIAL_SERVICES: Service[] = [
